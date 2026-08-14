@@ -1,0 +1,598 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#14161A">
+<meta name="mobile-web-app-capable" content="yes">
+<link rel="manifest" href="manifest.json">
+<title>Coil Yard Inventory</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Oswald:wght@500;600&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap');
+:root{
+  --bg:#14161A; --panel:#1D2025; --panel-2:#262A31; --border:#343A42;
+  --text:#E7E9EC; --dim:#8B919B; --accent:#E8A33D; --accent-2:#4A90A4;
+  --received:#C9A227; --instock:#4CAF6D; --allocated:#4A90A4;
+  --loading:#9B6FD9; --hold:#D96C4C; --shipped:#6B7280;
+  --f-disp:'Oswald',sans-serif; --f-mono:'IBM Plex Mono',monospace; --f-ui:'Inter',sans-serif;
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+html,body{margin:0;padding:0;}
+body{
+  background:var(--bg);color:var(--text);font-family:var(--f-ui);
+  padding-bottom:calc(78px + env(safe-area-inset-bottom));
+}
+.wrap{max-width:1200px;margin:0 auto;padding:14px 14px 0;}
+
+/* header */
+.hdr{display:flex;align-items:center;gap:11px;margin-bottom:14px;}
+.hdr svg{width:32px;height:32px;flex-shrink:0;}
+.hdr h1{font-family:var(--f-disp);font-size:17px;text-transform:uppercase;letter-spacing:.5px;margin:0;}
+.hdr .sub{font-family:var(--f-mono);font-size:11px;color:var(--dim);margin-top:1px;}
+
+/* stats */
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--border);
+  border:1px solid var(--border);border-radius:5px;overflow:hidden;margin-bottom:12px;}
+.stat{background:var(--panel);padding:9px 10px;}
+.stat .n{font-family:var(--f-mono);font-size:19px;font-weight:600;line-height:1.1;}
+.stat .l{font-size:9.5px;color:var(--dim);text-transform:uppercase;letter-spacing:.5px;margin-top:2px;}
+.stat.tot .n{color:var(--text);} .stat.rc .n{color:var(--received);}
+.stat.is .n{color:var(--instock);} .stat.al .n{color:var(--allocated);}
+.stat.hd .n{color:var(--hold);} .stat.sh .n{color:var(--shipped);}
+
+/* controls */
+.controls{display:flex;flex-direction:column;gap:8px;margin-bottom:12px;}
+.searchrow{display:flex;gap:7px;}
+input[type=text],input[type=date],select,textarea{
+  background:var(--panel-2);border:1px solid var(--border);color:var(--text);
+  border-radius:5px;padding:11px 12px;font-family:var(--f-ui);font-size:16px;width:100%;
+}
+textarea{resize:vertical;min-height:60px;}
+.searchrow input{flex:1;}
+.filterrow{display:flex;gap:7px;}
+.filterrow select,.filterrow input{flex:1;font-size:14px;padding:9px 10px;}
+button{
+  font-family:var(--f-ui);font-weight:600;font-size:14px;border-radius:5px;
+  border:1px solid var(--border);background:var(--panel-2);color:var(--text);
+  padding:11px 14px;cursor:pointer;min-height:44px;
+}
+button.primary{background:var(--accent);border-color:var(--accent);color:#1C1400;}
+button.sm{font-size:12.5px;padding:8px 11px;min-height:38px;}
+button:active{opacity:.75;}
+.meta{font-family:var(--f-mono);font-size:11px;color:var(--dim);}
+
+/* coil cards (mobile) */
+.cards{display:flex;flex-direction:column;gap:8px;}
+.card{background:var(--panel);border:1px solid var(--border);border-radius:6px;padding:12px;cursor:pointer;}
+.card:active{background:var(--panel-2);}
+.card .top{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:7px;}
+.card .cid{font-family:var(--f-mono);font-weight:600;font-size:15px;color:var(--accent);}
+.card .grade{font-size:13px;margin-bottom:6px;}
+.card .dims{font-family:var(--f-mono);font-size:11.5px;color:var(--dim);margin-bottom:6px;}
+.card .foot{display:flex;justify-content:space-between;gap:8px;font-size:11.5px;color:var(--dim);}
+.card .loc{color:var(--text);}
+
+.tag{display:inline-flex;align-items:center;gap:5px;font-weight:600;font-size:10px;
+  text-transform:uppercase;letter-spacing:.3px;padding:4px 8px;border-radius:3px;white-space:nowrap;}
+.tag::before{content:'';width:5px;height:5px;border-radius:50%;background:currentColor;}
+.tag.RECEIVED{background:rgba(201,162,39,.15);color:var(--received);}
+.tag.IN_STOCK{background:rgba(76,175,109,.15);color:var(--instock);}
+.tag.ALLOCATED{background:rgba(74,144,164,.15);color:var(--allocated);}
+.tag.LOADING{background:rgba(155,111,217,.15);color:var(--loading);}
+.tag.HOLD{background:rgba(217,108,76,.15);color:var(--hold);}
+.tag.SHIPPED{background:rgba(107,114,128,.15);color:var(--shipped);}
+
+.empty{text-align:center;padding:40px 16px;color:var(--dim);}
+.empty h3{font-family:var(--f-disp);text-transform:uppercase;color:var(--text);font-size:16px;margin:0 0 6px;}
+.empty .btns{display:flex;flex-direction:column;gap:8px;margin-top:16px;}
+
+/* bottom bar */
+.bottombar{
+  position:fixed;left:0;right:0;bottom:0;z-index:40;
+  background:var(--panel);border-top:1px solid var(--border);
+  padding:10px 14px calc(10px + env(safe-area-inset-bottom));
+  display:flex;gap:8px;
+}
+.bottombar button{flex:1;}
+.bottombar .scan{flex:2;display:flex;align-items:center;justify-content:center;gap:7px;}
+
+/* sheets/modals */
+.overlay{position:fixed;inset:0;background:rgba(8,9,11,.78);z-index:60;display:none;}
+.overlay.open{display:block;}
+.sheet{
+  position:absolute;left:0;right:0;bottom:0;max-height:94vh;overflow-y:auto;
+  background:var(--panel);border-top:1px solid var(--border);
+  border-radius:14px 14px 0 0;padding:16px 14px calc(20px + env(safe-area-inset-bottom));
+}
+.sheet h2{font-family:var(--f-disp);text-transform:uppercase;font-size:16px;margin:0 0 14px;letter-spacing:.4px;}
+.grab{width:36px;height:4px;background:var(--border);border-radius:2px;margin:0 auto 12px;}
+.field{margin-bottom:11px;}
+.field label{display:block;font-size:10.5px;text-transform:uppercase;letter-spacing:.4px;color:var(--dim);margin-bottom:5px;}
+.g2{display:grid;grid-template-columns:1fr 1fr;gap:11px;}
+.inputrow{display:flex;gap:7px;}
+.inputrow input{flex:1;}
+.inputrow button{flex-shrink:0;padding:0 13px;}
+.sheet-actions{display:flex;gap:8px;margin-top:16px;}
+.sheet-actions button{flex:1;}
+.danger{border-color:var(--hold);color:var(--hold);}
+
+/* scanner */
+#scanVideo{width:100%;max-height:56vh;background:#000;border-radius:6px;display:block;object-fit:cover;}
+.scanbox{position:relative;}
+.vf{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:78%;height:34%;
+  border:2px solid var(--accent);border-radius:6px;pointer-events:none;
+  box-shadow:0 0 0 2000px rgba(8,9,11,.35);}
+.scanstat{font-family:var(--f-mono);font-size:11.5px;color:var(--dim);text-align:center;margin-top:10px;
+  min-height:32px;line-height:1.45;word-break:break-word;}
+.scantips{font-size:11.5px;color:var(--dim);text-align:center;margin-top:2px;}
+
+.note{font-size:11.5px;color:var(--dim);line-height:1.5;background:var(--panel-2);
+  border:1px solid var(--border);border-radius:5px;padding:9px 11px;margin-bottom:12px;}
+.note strong{color:var(--text);}
+#fileInput{display:none;}
+.hide{display:none !important;}
+
+@media (min-width:820px){
+  .stats{grid-template-columns:repeat(6,1fr);}
+  .searchrow{flex-wrap:wrap;}
+  .sheet{position:relative;margin:40px auto;max-width:620px;border-radius:8px;border:1px solid var(--border);}
+  .overlay.open{overflow-y:auto;padding:0 16px;}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="hdr">
+    <svg viewBox="0 0 40 40" fill="none">
+      <circle cx="20" cy="20" r="18" stroke="#E8A33D" stroke-width="2.5"/>
+      <circle cx="20" cy="20" r="11.5" stroke="#4A90A4" stroke-width="2.5"/>
+      <circle cx="20" cy="20" r="5" fill="#E7E9EC"/>
+    </svg>
+    <div>
+      <h1>Coil Yard Inventory</h1>
+      <div class="sub" id="subline">loading…</div>
+    </div>
+  </div>
+
+  <div class="stats" id="stats"></div>
+
+  <div class="controls">
+    <div class="searchrow">
+      <input type="text" id="search" placeholder="Search coil ID, heat, grade, location…">
+      <button class="sm" id="btnClear">Clear</button>
+    </div>
+    <div class="filterrow">
+      <select id="filterStatus">
+        <option value="">All statuses</option>
+        <option value="RECEIVED">Received</option>
+        <option value="IN_STOCK">In Stock</option>
+        <option value="ALLOCATED">Allocated</option>
+        <option value="LOADING">Loading</option>
+        <option value="HOLD">Hold / QC</option>
+        <option value="SHIPPED">Shipped</option>
+      </select>
+      <input type="text" id="filterLocation" placeholder="Location / zone">
+    </div>
+    <div class="meta" id="resultCount"></div>
+  </div>
+
+  <div class="cards" id="cards"></div>
+
+  <div class="empty hide" id="emptyState">
+    <h3>No coils yet</h3>
+    <div>Add a coil, load sample data, or import a CSV to get started.</div>
+    <div class="btns">
+      <button class="primary" onclick="openAdd()">+ Add Coil</button>
+      <button id="btnSeed">Load sample data</button>
+    </div>
+  </div>
+
+  <div style="height:14px;"></div>
+</div>
+
+<div class="bottombar">
+  <button class="primary scan" id="btnScan">
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2"/><path d="M7 12h10"/></svg>
+    Scan Coil
+  </button>
+  <button id="btnAdd">+ Add</button>
+  <button id="btnMore">•••</button>
+</div>
+
+<input type="file" id="fileInput" accept=".csv">
+
+<!-- Add / Edit sheet -->
+<div class="overlay" id="editOverlay">
+  <div class="sheet">
+    <div class="grab"></div>
+    <h2 id="editTitle">Add Coil</h2>
+    <div class="field">
+      <label>Coil ID *</label>
+      <div class="inputrow">
+        <input type="text" id="f_coilId" placeholder="e.g. CL-04821" autocomplete="off">
+        <button id="btnScanField" title="Scan barcode">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2"/><path d="M7 12h10"/></svg>
+        </button>
+      </div>
+    </div>
+    <div class="field">
+      <label>Status</label>
+      <select id="f_status">
+        <option value="RECEIVED">Received</option>
+        <option value="IN_STOCK">In Stock</option>
+        <option value="ALLOCATED">Allocated</option>
+        <option value="LOADING">Loading</option>
+        <option value="HOLD">Hold / QC</option>
+        <option value="SHIPPED">Shipped</option>
+      </select>
+    </div>
+    <div class="field"><label>Location / Zone</label><input type="text" id="f_location" placeholder="e.g. Row C - Bay 12"></div>
+    <div class="g2">
+      <div class="field"><label>Heat / Lot</label><input type="text" id="f_heat"></div>
+      <div class="field"><label>Grade / Material</label><input type="text" id="f_grade"></div>
+      <div class="field"><label>Gauge</label><input type="text" id="f_gauge"></div>
+      <div class="field"><label>Width</label><input type="text" id="f_width"></div>
+      <div class="field"><label>Weight</label><input type="text" id="f_weight"></div>
+      <div class="field"><label>Outer Dia (OD)</label><input type="text" id="f_od"></div>
+      <div class="field"><label>Core ID</label><input type="text" id="f_core"></div>
+      <div class="field"><label>Received Date</label><input type="date" id="f_received"></div>
+    </div>
+    <div class="field"><label>Customer / Sales Order</label><input type="text" id="f_customer"></div>
+    <div class="field"><label>Supplier / Mill</label><input type="text" id="f_supplier"></div>
+    <div class="field"><label>Notes</label><textarea id="f_notes"></textarea></div>
+    <div class="sheet-actions">
+      <button id="btnDelete" class="danger hide">Delete</button>
+      <button id="btnCancelEdit">Cancel</button>
+      <button class="primary" id="btnSave">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- Scanner sheet -->
+<div class="overlay" id="scanOverlay">
+  <div class="sheet">
+    <div class="grab"></div>
+    <h2>Scan Coil</h2>
+    <div class="scanbox">
+      <video id="scanVideo" autoplay playsinline muted></video>
+      <div class="vf"></div>
+    </div>
+    <div class="scanstat" id="scanStat">Starting camera…</div>
+    <div class="scantips">Fill the frame with the barcode · hold steady 6–10 in away</div>
+    <div class="field" style="margin-top:14px;">
+      <label>Or type the coil ID manually</label>
+      <div class="inputrow">
+        <input type="text" id="manualId" placeholder="e.g. CL-04821" autocomplete="off">
+        <button class="primary" id="btnManualGo">Go</button>
+      </div>
+    </div>
+    <div class="sheet-actions">
+      <button id="btnTorch" class="hide">Light On</button>
+      <button id="btnScanCancel">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- More sheet -->
+<div class="overlay" id="moreOverlay">
+  <div class="sheet">
+    <div class="grab"></div>
+    <h2>Data & Tools</h2>
+    <div class="note">
+      Data is stored <strong>shared</strong> — everyone opening this app sees the same coil list. Fields align with typical WMS records so this maps onto <strong>DSMI‑Agility Mobile</strong> later.
+    </div>
+    <div class="sheet-actions" style="flex-direction:column;">
+      <button id="btnExport">Export CSV</button>
+      <button id="btnImport">Import CSV</button>
+      <button id="btnSeed2">Load sample data</button>
+      <button id="btnMoreClose">Close</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const KEY='coils';
+const LABEL={RECEIVED:'Received',IN_STOCK:'In Stock',ALLOCATED:'Allocated',LOADING:'Loading',HOLD:'Hold / QC',SHIPPED:'Shipped'};
+let coils=[], editingId=null;
+
+const $=id=>document.getElementById(id);
+const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+const uid=()=>'c_'+Date.now().toString(36)+Math.random().toString(36).slice(2,7);
+
+async function load(){
+  try{const r=await window.storage.get(KEY,true);coils=r&&r.value?JSON.parse(r.value):[];}
+  catch(e){coils=[];}
+  render();
+}
+async function save(){
+  try{await window.storage.set(KEY,JSON.stringify(coils),true);}
+  catch(e){alert('Could not save. Check your connection and try again.');}
+}
+
+function render(){
+  const c={RECEIVED:0,IN_STOCK:0,ALLOCATED:0,LOADING:0,HOLD:0,SHIPPED:0};
+  coils.forEach(x=>{if(c[x.status]!==undefined)c[x.status]++;});
+  $('stats').innerHTML=`
+    <div class="stat tot"><div class="n">${coils.length}</div><div class="l">Total</div></div>
+    <div class="stat rc"><div class="n">${c.RECEIVED}</div><div class="l">Received</div></div>
+    <div class="stat is"><div class="n">${c.IN_STOCK}</div><div class="l">In Stock</div></div>
+    <div class="stat al"><div class="n">${c.ALLOCATED+c.LOADING}</div><div class="l">Allocated</div></div>
+    <div class="stat hd"><div class="n">${c.HOLD}</div><div class="l">Hold/QC</div></div>
+    <div class="stat sh"><div class="n">${c.SHIPPED}</div><div class="l">Shipped</div></div>`;
+  $('subline').textContent=coils.length?`${coils.length} coils · shared`:'shared inventory';
+
+  const q=$('search').value.trim().toLowerCase();
+  const st=$('filterStatus').value;
+  const loc=$('filterLocation').value.trim().toLowerCase();
+  const list=coils.filter(x=>{
+    if(st&&x.status!==st)return false;
+    if(loc&&!(x.location||'').toLowerCase().includes(loc))return false;
+    if(q&&![x.coilId,x.heat,x.grade,x.customer,x.location,x.supplier].join(' ').toLowerCase().includes(q))return false;
+    return true;
+  }).sort((a,b)=>(b.received||'').localeCompare(a.received||''));
+
+  $('resultCount').textContent=coils.length?`${list.length} of ${coils.length} shown`:'';
+  $('emptyState').classList.toggle('hide',coils.length>0);
+
+  $('cards').innerHTML=list.map(x=>{
+    const dims=[x.gauge,x.width,x.weight].filter(Boolean).join(' · ');
+    return `<div class="card" onclick="openEdit('${x.id}')">
+      <div class="top"><span class="cid">${esc(x.coilId)}</span><span class="tag ${x.status}">${LABEL[x.status]||x.status}</span></div>
+      ${x.grade?`<div class="grade">${esc(x.grade)}</div>`:''}
+      ${dims?`<div class="dims">${esc(dims)}</div>`:''}
+      <div class="foot">
+        <span class="loc">${esc(x.location||'—')}</span>
+        <span>${esc(x.heat?'Heat '+x.heat:'')}${x.customer?' · '+esc(x.customer):''}</span>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+['search','filterStatus','filterLocation'].forEach(id=>$(id).addEventListener('input',render));
+$('btnClear').addEventListener('click',()=>{$('search').value='';$('filterStatus').value='';$('filterLocation').value='';render();});
+
+/* ---------- add / edit ---------- */
+const F=['coilId','heat','grade','gauge','width','weight','od','core','location','customer','supplier','received','notes'];
+function openAdd(prefillId){
+  editingId=null;
+  $('editTitle').textContent='Add Coil';
+  $('btnDelete').classList.add('hide');
+  F.forEach(k=>$('f_'+k).value='');
+  $('f_status').value='RECEIVED';
+  if(prefillId)$('f_coilId').value=prefillId;
+  $('editOverlay').classList.add('open');
+}
+function openEdit(id){
+  const x=coils.find(c=>c.id===id); if(!x)return;
+  editingId=id;
+  $('editTitle').textContent='Edit Coil';
+  $('btnDelete').classList.remove('hide');
+  F.forEach(k=>$('f_'+k).value=x[k]||'');
+  $('f_status').value=x.status||'RECEIVED';
+  $('editOverlay').classList.add('open');
+}
+window.openAdd=openAdd; window.openEdit=openEdit;
+
+$('btnAdd').addEventListener('click',()=>openAdd());
+$('btnCancelEdit').addEventListener('click',()=>$('editOverlay').classList.remove('open'));
+$('btnSave').addEventListener('click',async()=>{
+  const coilId=$('f_coilId').value.trim();
+  if(!coilId){alert('Coil ID is required.');return;}
+  const d={status:$('f_status').value};
+  F.forEach(k=>d[k]=$('f_'+k).value.trim());
+  if(editingId){const i=coils.findIndex(c=>c.id===editingId);if(i>-1)coils[i]={...coils[i],...d};}
+  else coils.push({id:uid(),...d});
+  await save(); $('editOverlay').classList.remove('open'); render();
+});
+$('btnDelete').addEventListener('click',async()=>{
+  if(!editingId||!confirm('Delete this coil record?'))return;
+  coils=coils.filter(c=>c.id!==editingId);
+  await save(); $('editOverlay').classList.remove('open'); render();
+});
+
+/* ---------- scanner: native BarcodeDetector, ZXing fallback ---------- */
+let stream=null,detector=null,rafId=null,zxReader=null,scanMode='search',track=null,torchOn=false;
+
+async function openScanner(mode){
+  scanMode=mode;
+  $('scanOverlay').classList.add('open');
+  $('manualId').value='';
+  const stat=$('scanStat');
+  stat.textContent='Starting camera…';
+
+  try{
+    stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}}});
+  }catch(err){
+    stat.textContent=`Camera unavailable (${err.name||'error'}). Type the ID below instead.`;
+    return;
+  }
+  const v=$('scanVideo');
+  v.srcObject=stream;
+  try{await v.play();}catch(e){}
+  track=stream.getVideoTracks()[0];
+
+  // torch support (useful in a yard / low light)
+  try{
+    const caps=track.getCapabilities?track.getCapabilities():{};
+    if(caps.torch)$('btnTorch').classList.remove('hide');
+  }catch(e){}
+
+  if('BarcodeDetector' in window){
+    try{
+      detector=new BarcodeDetector({formats:['code_128','code_39','code_93','ean_13','ean_8','upc_a','upc_e','itf','codabar','qr_code','data_matrix']});
+    }catch(e){ try{detector=new BarcodeDetector();}catch(e2){detector=null;} }
+  }
+
+  if(detector){
+    stat.textContent='Scanning… point at the barcode';
+    nativeLoop();
+  }else{
+    stat.textContent='Loading scanner…';
+    loadZXing().then(()=>{
+      stat.textContent='Scanning… point at the barcode';
+      zxLoop();
+    }).catch(()=>{
+      stat.textContent='Auto-scan not supported by this browser. Type the ID below instead.';
+    });
+  }
+}
+
+async function nativeLoop(){
+  if(!stream||!detector)return;
+  try{
+    const codes=await detector.detect($('scanVideo'));
+    if(codes&&codes.length){onScan(codes[0].rawValue);return;}
+  }catch(e){}
+  rafId=requestAnimationFrame(nativeLoop);
+}
+
+function loadZXing(){
+  return new Promise((res,rej)=>{
+    if(window.ZXing){res();return;}
+    const s=document.createElement('script');
+    s.src='https://unpkg.com/@zxing/library@0.21.3/umd/index.min.js';
+    s.onload=()=>window.ZXing?res():rej(new Error('no ZXing'));
+    s.onerror=()=>rej(new Error('load failed'));
+    document.head.appendChild(s);
+  });
+}
+function zxLoop(){
+  if(!window.ZXing)return;
+  zxReader=new ZXing.BrowserMultiFormatReader();
+  zxReader.decodeFromVideoElement($('scanVideo'),(result,err)=>{
+    if(result)onScan(result.getText());
+  }).catch(()=>{
+    $('scanStat').textContent='Auto-scan failed to start. Type the ID below instead.';
+  });
+}
+
+function onScan(text){
+  const val=String(text).trim();
+  if(!val)return;
+  if(navigator.vibrate)navigator.vibrate(60);
+  closeScanner();
+  handleId(val);
+}
+
+function handleId(val){
+  if(scanMode==='field'){ $('f_coilId').value=val; return; }
+  const match=coils.find(c=>(c.coilId||'').toLowerCase()===val.toLowerCase());
+  if(match){ openEdit(match.id); }
+  else{
+    $('search').value=val; $('filterStatus').value=''; $('filterLocation').value=''; render();
+    setTimeout(()=>{ if(confirm(`No coil found with ID "${val}". Add it as new?`)) openAdd(val); },120);
+  }
+}
+
+function closeScanner(){
+  $('scanOverlay').classList.remove('open');
+  if(rafId)cancelAnimationFrame(rafId); rafId=null; detector=null;
+  if(zxReader){try{zxReader.reset();}catch(e){} zxReader=null;}
+  if(stream){stream.getTracks().forEach(t=>t.stop()); stream=null;}
+  track=null; torchOn=false;
+  $('btnTorch').classList.add('hide'); $('btnTorch').textContent='Light On';
+}
+
+$('btnScan').addEventListener('click',()=>openScanner('search'));
+$('btnScanField').addEventListener('click',()=>openScanner('field'));
+$('btnScanCancel').addEventListener('click',closeScanner);
+$('btnManualGo').addEventListener('click',()=>{
+  const v=$('manualId').value.trim();
+  if(!v)return;
+  closeScanner(); handleId(v);
+});
+$('manualId').addEventListener('keydown',e=>{if(e.key==='Enter')$('btnManualGo').click();});
+$('btnTorch').addEventListener('click',async()=>{
+  if(!track)return;
+  torchOn=!torchOn;
+  try{ await track.applyConstraints({advanced:[{torch:torchOn}]}); $('btnTorch').textContent=torchOn?'Light Off':'Light On'; }
+  catch(e){ $('btnTorch').classList.add('hide'); }
+});
+
+/* ---------- more sheet / csv ---------- */
+$('btnMore').addEventListener('click',()=>$('moreOverlay').classList.add('open'));
+$('btnMoreClose').addEventListener('click',()=>$('moreOverlay').classList.remove('open'));
+document.querySelectorAll('.overlay').forEach(o=>o.addEventListener('click',e=>{
+  if(e.target!==o)return;
+  if(o.id==='scanOverlay')closeScanner(); else o.classList.remove('open');
+}));
+
+const SAMPLES=[
+  {coilId:'CL-04821',heat:'H29831',grade:'A1011 CS Type B',gauge:'0.075 in',width:'48 in',weight:'42,300 lb',od:'68 in',core:'20 in',location:'Row A - Bay 03',status:'IN_STOCK',customer:'',supplier:'Nucor',received:'2026-07-02',notes:''},
+  {coilId:'CL-04822',heat:'H29831',grade:'A1011 CS Type B',gauge:'0.075 in',width:'48 in',weight:'41,900 lb',od:'67 in',core:'20 in',location:'Row A - Bay 04',status:'IN_STOCK',customer:'',supplier:'Nucor',received:'2026-07-02',notes:''},
+  {coilId:'CL-04901',heat:'H30112',grade:'DP600 HR',gauge:'0.110 in',width:'60 in',weight:'44,750 lb',od:'70 in',core:'24 in',location:'Row B - Bay 11',status:'ALLOCATED',customer:'Acme Stamping SO 88213',supplier:'Cleveland-Cliffs',received:'2026-07-14',notes:''},
+  {coilId:'CL-04955',heat:'H30401',grade:'G90 Galv',gauge:'0.060 in',width:'36 in',weight:'28,100 lb',od:'62 in',core:'20 in',location:'Row C - Bay 02',status:'HOLD',customer:'',supplier:'Steel Dynamics',received:'2026-07-20',notes:'QC re-check on edge condition'},
+  {coilId:'CL-05010',heat:'H30512',grade:'A1011 CS Type B',gauge:'0.090 in',width:'48 in',weight:'40,200 lb',od:'66 in',core:'20 in',location:'Loadout Dock 1',status:'LOADING',customer:'Midwest Fab SO 88240',supplier:'Nucor',received:'2026-07-25',notes:''},
+  {coilId:'CL-05033',heat:'H30601',grade:'A1011 CS Type B',gauge:'0.075 in',width:'48 in',weight:'42,050 lb',od:'68 in',core:'20 in',location:'Receiving',status:'RECEIVED',customer:'',supplier:'Nucor',received:'2026-08-11',notes:'Not yet inspected'}
+];
+async function seed(){
+  coils=coils.concat(SAMPLES.map(s=>({id:uid(),...s})));
+  await save(); $('moreOverlay').classList.remove('open'); render();
+}
+$('btnSeed').addEventListener('click',seed);
+$('btnSeed2').addEventListener('click',seed);
+
+const HEADERS=['coilId','heat','grade','gauge','width','weight','od','core','location','status','customer','supplier','received','notes'];
+$('btnExport').addEventListener('click',()=>{
+  const rows=[HEADERS.join(',')].concat(coils.map(c=>HEADERS.map(h=>{
+    const v=String(c[h]||'').replace(/"/g,'""');
+    return /[,"\n]/.test(v)?`"${v}"`:v;
+  }).join(',')));
+  const url=URL.createObjectURL(new Blob([rows.join('\n')],{type:'text/csv'}));
+  const a=document.createElement('a'); a.href=url; a.download='coil-inventory.csv'; a.click();
+  URL.revokeObjectURL(url);
+});
+$('btnImport').addEventListener('click',()=>$('fileInput').click());
+$('fileInput').addEventListener('change',async e=>{
+  const f=e.target.files[0]; if(!f)return;
+  const lines=(await f.text()).split(/\r?\n/).filter(l=>l.trim());
+  if(lines.length<2){alert('CSV appears empty.');return;}
+  const hdr=csvLine(lines[0]).map(h=>h.trim());
+  let n=0;
+  for(let i=1;i<lines.length;i++){
+    const vals=csvLine(lines[i]); const row={};
+    hdr.forEach((h,j)=>row[h]=vals[j]||'');
+    if(!row.coilId)continue;
+    if(!LABEL[row.status])row.status='RECEIVED';
+    const rec={id:uid()}; HEADERS.forEach(h=>rec[h]=row[h]||''); rec.status=row.status;
+    coils.push(rec); n++;
+  }
+  await save(); render(); $('moreOverlay').classList.remove('open');
+  alert(`Imported ${n} coil${n===1?'':'s'}.`); e.target.value='';
+});
+function csvLine(line){
+  const out=[];let cur='',q=false;
+  for(let i=0;i<line.length;i++){
+    const ch=line[i];
+    if(q){ if(ch==='"'){ if(line[i+1]==='"'){cur+='"';i++;} else q=false; } else cur+=ch; }
+    else{ if(ch==='"')q=true; else if(ch===','){out.push(cur);cur='';} else cur+=ch; }
+  }
+  out.push(cur); return out;
+}
+
+load();
+
+// Handle a coil ID handed to us via Android's Share sheet (e.g. from a QR/barcode scanner app)
+(function handleIncomingShare(){
+  const params = new URLSearchParams(location.search);
+  const shared = (params.get('text') || params.get('title') || params.get('url') || '').trim();
+  if(shared){
+    // wait for the coil list to finish loading, then act on it
+    const tryHandle = setInterval(() => {
+      if(document.readyState === 'complete'){
+        clearInterval(tryHandle);
+        setTimeout(() => handleId(shared), 300);
+        history.replaceState(null, '', location.pathname);
+      }
+    }, 100);
+  }
+})();
+
+if('serviceWorker' in navigator){
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('service-worker.js').catch(() => {});
+  });
+}
+</script>
+</body>
+</html>
