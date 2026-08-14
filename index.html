@@ -6,6 +6,8 @@
 <meta name="theme-color" content="#14161A">
 <meta name="mobile-web-app-capable" content="yes">
 <link rel="manifest" href="manifest.json">
+<script src="https://cdn.jsdelivr.net/npm/@azure/msal-browser@3/lib/msal-browser.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <title>Coil Yard Inventory</title>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Oswald:wght@500;600&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap');
@@ -278,10 +280,16 @@ button:active{opacity:.75;}
   <div class="sheet">
     <div class="grab"></div>
     <h2>Data & Tools</h2>
-    <div class="note">
-      Data is stored <strong>shared</strong> — everyone opening this app sees the same coil list. Fields align with typical WMS records so this maps onto <strong>DSMI‑Agility Mobile</strong> later.
+    <div class="note" id="storageNote">
+      Data is stored <strong>shared</strong> inside Claude — everyone opening this app there sees the same coil list. On this hosted version, connect OneDrive below to save data for real.
+    </div>
+    <div class="field" id="odStatus">
+      <label>OneDrive</label>
+      <div class="meta" id="odStatusText">Not connected — data won't be saved on this hosted version until you connect.</div>
     </div>
     <div class="sheet-actions" style="flex-direction:column;">
+      <button class="primary" id="btnConnectOD">Connect to OneDrive</button>
+      <button id="btnDisconnectOD" class="hide">Disconnect OneDrive</button>
       <button id="btnExport">Export CSV</button>
       <button id="btnImport">Import CSV</button>
       <button id="btnSeed2">Load sample data</button>
@@ -299,12 +307,156 @@ const $=id=>document.getElementById(id);
 const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
 const uid=()=>'c_'+Date.now().toString(36)+Math.random().toString(36).slice(2,7);
 
+/* ---------- OneDrive / Excel backend ---------- */
+const XL_HEADERS=['coilId','status','heat','grade','gauge','width','weight','od','core','location','customer','supplier','received','notes'];
+const XL_FILE='CoilInventory.xlsx';
+const XL_SHEET='Coils';
+let msalInstance=null, msalAccount=null;
+
+function initMsal(){
+  if(typeof msal==='undefined')return null;
+  if(!msalInstance){
+    msalInstance=new msal.PublicClientApplication({
+      auth:{
+        clientId:'cf75c226-ba1d-4aa3-8a41-c80a5b01a047',
+        authority:'https://login.microsoftonline.com/b0912046-0fb8-44f5-b391-d683ef8c2280',
+        redirectUri: window.location.origin + window.location.pathname
+      }
+    });
+  }
+  return msalInstance;
+}
+
+function odSetStatus(text){ const el=$('odStatusText'); if(el) el.textContent=text; }
+
+async function getGraphToken(){
+  const inst=initMsal();
+  const req={scopes:['Files.ReadWrite'], account:msalAccount};
+  try{
+    const r=await inst.acquireTokenSilent(req);
+    return r.accessToken;
+  }catch(e){
+    const r=await inst.acquireTokenPopup(req);
+    return r.accessToken;
+  }
+}
+
+async function ensureExcelFile(token){
+  const check=await fetch(`https://graph.microsoft.com/v1.0/me/drive/root:/${XL_FILE}`,{headers:{Authorization:'Bearer '+token}});
+  if(check.status===404){
+    const wb=XLSX.utils.book_new();
+    const ws=XLSX.utils.aoa_to_sheet([XL_HEADERS]);
+    XLSX.utils.book_append_sheet(wb,ws,XL_SHEET);
+    const bin=XLSX.write(wb,{bookType:'xlsx',type:'array'});
+    const blob=new Blob([bin],{type:'application/octet-stream'});
+    const up=await fetch(`https://graph.microsoft.com/v1.0/me/drive/root:/${XL_FILE}:/content`,{
+      method:'PUT',
+      headers:{Authorization:'Bearer '+token,'Content-Type':'application/octet-stream'},
+      body:blob
+    });
+    if(!up.ok) throw new Error('Could not create '+XL_FILE+' ('+up.status+')');
+  }else if(!check.ok){
+    throw new Error('Could not access OneDrive ('+check.status+')');
+  }
+}
+
+async function loadFromExcel(){
+  const token=await getGraphToken();
+  await ensureExcelFile(token);
+  const url=`https://graph.microsoft.com/v1.0/me/drive/root:/${XL_FILE}:/workbook/worksheets('${XL_SHEET}')/usedRange`;
+  const res=await fetch(url,{headers:{Authorization:'Bearer '+token}});
+  if(!res.ok) throw new Error('Could not read '+XL_FILE+' ('+res.status+')');
+  const data=await res.json();
+  const rows=data.values||[];
+  if(rows.length<2){ coils=[]; return; }
+  const headers=rows[0].map(h=>String(h||'').trim());
+  coils=rows.slice(1)
+    .filter(r=>r[0])
+    .map(r=>{
+      const o={id:uid()};
+      headers.forEach((h,i)=>{ o[h]=r[i]!==undefined&&r[i]!==null?String(r[i]):''; });
+      if(!o.status||!LABEL[o.status])o.status='RECEIVED';
+      return o;
+    });
+}
+
+async function saveToExcel(){
+  const token=await getGraphToken();
+  const clearUrl=`https://graph.microsoft.com/v1.0/me/drive/root:/${XL_FILE}:/workbook/worksheets('${XL_SHEET}')/range(address='A1:N5000')/clear`;
+  await fetch(clearUrl,{method:'POST',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:JSON.stringify({applyTo:'Contents'})});
+  const data=[XL_HEADERS];
+  coils.forEach(c=>data.push(XL_HEADERS.map(h=>c[h]||'')));
+  const lastCol=String.fromCharCode(64+XL_HEADERS.length);
+  const address=`A1:${lastCol}${data.length}`;
+  const writeUrl=`https://graph.microsoft.com/v1.0/me/drive/root:/${XL_FILE}:/workbook/worksheets('${XL_SHEET}')/range(address='${address}')`;
+  const res=await fetch(writeUrl,{method:'PATCH',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:JSON.stringify({values:data})});
+  if(!res.ok) throw new Error('Could not write to '+XL_FILE+' ('+res.status+')');
+}
+
+async function connectOneDrive(){
+  const inst=initMsal();
+  if(!inst){ alert('OneDrive library failed to load — check your connection and try again.'); return; }
+  odSetStatus('Connecting…');
+  try{
+    const resp=await inst.loginPopup({scopes:['Files.ReadWrite']});
+    msalAccount=resp.account;
+    odSetStatus('Setting up '+XL_FILE+'…');
+    await loadFromExcel();
+    odConnectedUI();
+    render();
+  }catch(e){
+    odSetStatus('Not connected — data won\'t be saved on this hosted version until you connect.');
+    alert('Could not connect to OneDrive: '+(e.message||e));
+  }
+}
+
+function odConnectedUI(){
+  $('btnConnectOD').classList.add('hide');
+  $('btnDisconnectOD').classList.remove('hide');
+  odSetStatus('Connected as '+(msalAccount?msalAccount.username:'')+' — saving to '+XL_FILE+' in OneDrive.');
+  $('storageNote').innerHTML='Data is saving <strong>live to OneDrive</strong> ('+XL_FILE+'). Anyone with access to that file can also open it directly in Excel.';
+}
+
+$('btnConnectOD').addEventListener('click',connectOneDrive);
+$('btnDisconnectOD').addEventListener('click',()=>{
+  msalAccount=null;
+  $('btnConnectOD').classList.remove('hide');
+  $('btnDisconnectOD').classList.add('hide');
+  odSetStatus('Not connected — data won\'t be saved on this hosted version until you connect.');
+  $('storageNote').innerHTML='Data is stored <strong>shared</strong> inside Claude — everyone opening this app there sees the same coil list. On this hosted version, connect OneDrive below to save data for real.';
+});
+
+// Try to silently restore a previous OneDrive session on load
+(function restoreOneDriveSession(){
+  const tryRestore=setInterval(()=>{
+    const inst=initMsal();
+    if(!inst)return;
+    clearInterval(tryRestore);
+    const accounts=inst.getAllAccounts();
+    if(accounts.length>0){
+      msalAccount=accounts[0];
+      odConnectedUI();
+      loadFromExcel().then(render).catch(e=>odSetStatus('Reconnected, but could not load: '+(e.message||e)));
+    }
+  },200);
+})();
+
+/* ---------- storage: OneDrive if connected, else Claude's shared storage ---------- */
 async function load(){
+  if(msalAccount){
+    try{ await loadFromExcel(); }catch(e){ odSetStatus('Could not load from OneDrive: '+(e.message||e)); }
+    render();
+    return;
+  }
   try{const r=await window.storage.get(KEY,true);coils=r&&r.value?JSON.parse(r.value):[];}
   catch(e){coils=[];}
   render();
 }
 async function save(){
+  if(msalAccount){
+    try{ await saveToExcel(); }catch(e){ alert('Could not save to OneDrive: '+(e.message||e)); }
+    return;
+  }
   try{await window.storage.set(KEY,JSON.stringify(coils),true);}
   catch(e){alert('Could not save. Check your connection and try again.');}
 }
@@ -417,7 +569,15 @@ async function openScanner(mode){
     if(caps.torch)$('btnTorch').classList.remove('hide');
   }catch(e){}
 
+  let nativeWorks = false;
   if('BarcodeDetector' in window){
+    try{
+      const formats = await BarcodeDetector.getSupportedFormats();
+      nativeWorks = !!(formats && formats.length > 0);
+    }catch(e){ nativeWorks = false; }
+  }
+
+  if(nativeWorks){
     try{
       detector=new BarcodeDetector({formats:['code_128','code_39','code_93','ean_13','ean_8','upc_a','upc_e','itf','codabar','qr_code','data_matrix']});
     }catch(e){ try{detector=new BarcodeDetector();}catch(e2){detector=null;} }
