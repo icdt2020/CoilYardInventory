@@ -313,7 +313,8 @@ const XL_FILE='CoilInventory.xlsx';
 const XL_SHEET='Coils';
 let msalInstance=null, msalAccount=null;
 
-function initMsal(){
+let msalInitPromise=null;
+async function initMsal(){
   if(typeof msal==='undefined')return null;
   if(!msalInstance){
     msalInstance=new msal.PublicClientApplication({
@@ -324,13 +325,17 @@ function initMsal(){
       }
     });
   }
+  if(!msalInitPromise){
+    msalInitPromise=msalInstance.initialize();
+  }
+  await msalInitPromise;
   return msalInstance;
 }
 
 function odSetStatus(text){ const el=$('odStatusText'); if(el) el.textContent=text; }
 
 async function getGraphToken(){
-  const inst=initMsal();
+  const inst=await initMsal();
   const req={scopes:['Files.ReadWrite'], account:msalAccount};
   try{
     const r=await inst.acquireTokenSilent(req);
@@ -394,7 +399,7 @@ async function saveToExcel(){
 }
 
 async function connectOneDrive(){
-  const inst=initMsal();
+  const inst=await initMsal();
   if(!inst){ alert('OneDrive library failed to load — check your connection and try again.'); return; }
   odSetStatus('Connecting…');
   try{
@@ -427,18 +432,22 @@ $('btnDisconnectOD').addEventListener('click',()=>{
 });
 
 // Try to silently restore a previous OneDrive session on load
-(function restoreOneDriveSession(){
-  const tryRestore=setInterval(()=>{
-    const inst=initMsal();
-    if(!inst)return;
-    clearInterval(tryRestore);
-    const accounts=inst.getAllAccounts();
-    if(accounts.length>0){
-      msalAccount=accounts[0];
-      odConnectedUI();
-      loadFromExcel().then(render).catch(e=>odSetStatus('Reconnected, but could not load: '+(e.message||e)));
-    }
-  },200);
+(async function restoreOneDriveSession(){
+  if(typeof msal==='undefined'){
+    // library may still be loading — wait for it briefly
+    await new Promise(res=>{
+      const t=setInterval(()=>{ if(typeof msal!=='undefined'){clearInterval(t);res();} },200);
+      setTimeout(()=>{clearInterval(t);res();},5000);
+    });
+  }
+  const inst=await initMsal();
+  if(!inst)return;
+  const accounts=inst.getAllAccounts();
+  if(accounts.length>0){
+    msalAccount=accounts[0];
+    odConnectedUI();
+    loadFromExcel().then(render).catch(e=>odSetStatus('Reconnected, but could not load: '+(e.message||e)));
+  }
 })();
 
 /* ---------- storage: OneDrive if connected, else Claude's shared storage ---------- */
