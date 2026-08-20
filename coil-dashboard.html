@@ -293,19 +293,32 @@ async function initMsal(){
 
 async function getGraphToken(){
   const inst=await initMsal();
-  const req={scopes:['Files.ReadWrite'], account:msalAccount};
+  const req={scopes:['Files.ReadWrite','Sites.ReadWrite.All'], account:msalAccount};
   try{ return (await inst.acquireTokenSilent(req)).accessToken; }
   catch(e){ return (await inst.acquireTokenPopup(req)).accessToken; }
 }
 
-// Fixed, permanent identifiers for CoilInventory.xlsx — same as the main app,
-// no link-resolution step needed at runtime.
-const XL_DRIVE_ID='b!G5Az0SLi6kqDrATgh2rkJ1fYJumZdi5HjtBSH4BoghAZ_1H6hw7BTLNhws8AIO8Y';
-const XL_ITEM_ID='01UXMG4AIZ5RDE6P2KVNFLPXABPFKBP2YR';
+// Resolves the SharePoint site's document library directly, using a
+// drive-wide search for the file rather than assuming its exact folder path.
+const XL_SITE_HOSTNAME='steelerinc.sharepoint.com';
+const XL_SITE_PATH='/sites/AppsOperation';
+const XL_FILE_NAME='CoilInventory.xlsx';
 
 async function resolveSharedFile(token){
-  sharedDriveId=XL_DRIVE_ID;
-  sharedItemId=XL_ITEM_ID;
+  if(sharedDriveId && sharedItemId) return;
+  const siteRes=await fetch(`https://graph.microsoft.com/v1.0/sites/${XL_SITE_HOSTNAME}:${XL_SITE_PATH}`,{headers:{Authorization:'Bearer '+token}});
+  if(!siteRes.ok) throw new Error('Could not find the SharePoint site ('+siteRes.status+')');
+  const site=await siteRes.json();
+  const driveRes=await fetch(`https://graph.microsoft.com/v1.0/sites/${site.id}/drive`,{headers:{Authorization:'Bearer '+token}});
+  if(!driveRes.ok) throw new Error('Could not access the site\'s document library ('+driveRes.status+')');
+  const drive=await driveRes.json();
+  sharedDriveId=drive.id;
+  const searchRes=await fetch(`https://graph.microsoft.com/v1.0/drives/${sharedDriveId}/root/search(q='${encodeURIComponent(XL_FILE_NAME)}')`,{headers:{Authorization:'Bearer '+token}});
+  if(!searchRes.ok) throw new Error('Could not search the document library for '+XL_FILE_NAME+' ('+searchRes.status+')');
+  const searchData=await searchRes.json();
+  const match=(searchData.value||[]).find(f=>f.name===XL_FILE_NAME);
+  if(!match) throw new Error(XL_FILE_NAME+' was not found anywhere in this site\'s document library.');
+  sharedItemId=match.id;
 }
 
 async function loadFromExcel(){
@@ -347,7 +360,7 @@ async function connectOneDrive(){
   if(!inst){ alert('OneDrive library failed to load — check your connection and try again.'); return; }
   document.getElementById('asof').innerHTML='<span class="dot"></span>Connecting…';
   try{
-    const resp=await inst.loginPopup({scopes:['Files.ReadWrite']});
+    const resp=await inst.loginPopup({scopes:['Files.ReadWrite','Sites.ReadWrite.All']});
     msalAccount=resp.account;
     const liveCoils=await loadFromExcel();
     renderAll(liveCoils.length?liveCoils:SAMPLE_COILS);
