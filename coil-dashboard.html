@@ -273,7 +273,7 @@ renderAll(SAMPLE_COILS);
 /* ---------- OneDrive / Excel — same app registration as the main inventory app ---------- */
 const XL_SHEET='Coils';
 let msalInstance=null, msalInitPromise=null, msalAccount=null;
-let sharedDriveId=null, sharedItemId=null;
+let sharedDriveId=null;
 
 async function initMsal(){
   if(typeof msal==='undefined')return null;
@@ -298,14 +298,14 @@ async function getGraphToken(){
   catch(e){ return (await inst.acquireTokenPopup(req)).accessToken; }
 }
 
-// Resolves the SharePoint site's document library directly, using a
-// drive-wide search for the file rather than assuming its exact folder path.
+// Resolves the SharePoint site's document library and points directly at the
+// file's known path (confirmed: Documents > Apps Operation > CoilInventory.xlsx).
 const XL_SITE_HOSTNAME='steelerinc.sharepoint.com';
 const XL_SITE_PATH='/sites/AppsOperation';
-const XL_FILE_NAME='CoilInventory.xlsx';
+const XL_FILE_PATH=['App Operation','CoilInventory.xlsx'].map(encodeURIComponent).join('/');
 
 async function resolveSharedFile(token){
-  if(sharedDriveId && sharedItemId) return;
+  if(sharedDriveId) return;
   const siteRes=await fetch(`https://graph.microsoft.com/v1.0/sites/${XL_SITE_HOSTNAME}:${XL_SITE_PATH}`,{headers:{Authorization:'Bearer '+token}});
   if(!siteRes.ok) throw new Error('Could not find the SharePoint site ('+siteRes.status+')');
   const site=await siteRes.json();
@@ -313,19 +313,13 @@ async function resolveSharedFile(token){
   if(!driveRes.ok) throw new Error('Could not access the site\'s document library ('+driveRes.status+')');
   const drive=await driveRes.json();
   sharedDriveId=drive.id;
-  const searchRes=await fetch(`https://graph.microsoft.com/v1.0/drives/${sharedDriveId}/root/search(q='${encodeURIComponent(XL_FILE_NAME)}')`,{headers:{Authorization:'Bearer '+token}});
-  if(!searchRes.ok) throw new Error('Could not search the document library for '+XL_FILE_NAME+' ('+searchRes.status+')');
-  const searchData=await searchRes.json();
-  const match=(searchData.value||[]).find(f=>f.name===XL_FILE_NAME);
-  if(!match) throw new Error(XL_FILE_NAME+' was not found anywhere in this site\'s document library.');
-  sharedItemId=match.id;
 }
 
 async function loadFromExcel(){
   const token=await getGraphToken();
   await resolveSharedFile(token);
 
-  const wsCheck=await fetch(`https://graph.microsoft.com/v1.0/drives/${sharedDriveId}/items/${sharedItemId}/workbook/worksheets`,{headers:{Authorization:'Bearer '+token}});
+  const wsCheck=await fetch(`https://graph.microsoft.com/v1.0/drives/${sharedDriveId}/root:/${XL_FILE_PATH}:/workbook/worksheets`,{headers:{Authorization:'Bearer '+token}});
   if(!wsCheck.ok) throw new Error(`Found CoilInventory.xlsx but could not read its worksheets (${wsCheck.status})`);
   const wsData=await wsCheck.json();
   const sheetNames=(wsData.value||[]).map(s=>s.name);
@@ -336,7 +330,7 @@ async function loadFromExcel(){
     console.warn(`No worksheet named "${XL_SHEET}" — using "${sheetToUse}" instead. Sheets found: ${sheetNames.join(', ')}`);
   }
 
-  const url=`https://graph.microsoft.com/v1.0/drives/${sharedDriveId}/items/${sharedItemId}/workbook/worksheets('${sheetToUse}')/usedRange`;
+  const url=`https://graph.microsoft.com/v1.0/drives/${sharedDriveId}/root:/${XL_FILE_PATH}:/workbook/worksheets('${sheetToUse}')/usedRange`;
   const res=await fetch(url,{headers:{Authorization:'Bearer '+token}});
   if(!res.ok) throw new Error(`Found CoilInventory.xlsx and sheet "${sheetToUse}", but could not read its data (${res.status})`);
   const data=await res.json();

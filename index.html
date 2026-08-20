@@ -319,7 +319,7 @@ const uid=()=>'c_'+Date.now().toString(36)+Math.random().toString(36).slice(2,7)
 const XL_HEADERS=['coilId','status','heat','grade','gauge','width','weight','od','core','location','customer','supplier','received','notes'];
 const XL_SHEET='Coils';
 let msalInstance=null, msalAccount=null;
-let sharedDriveId=null, sharedItemId=null;
+let sharedDriveId=null;
 
 let msalInitPromise=null;
 async function initMsal(){
@@ -356,15 +356,15 @@ async function getGraphToken(){
 
 // Resolves the SharePoint site's document library directly (instead of going
 // through a sharing link, which proved unreliable — even the file's own owner
-// hit a 403 resolving via /shares/). Uses a drive-wide search for the file
-// itself rather than assuming an exact folder path, since Teams-provisioned
-// sites often nest files under a channel-name subfolder that varies.
+// hit a 403 resolving via /shares/). Points directly at the file's known path
+// (confirmed: Documents > Apps Operation > CoilInventory.xlsx) — no search
+// step, no indexing delay to worry about.
 const XL_SITE_HOSTNAME='steelerinc.sharepoint.com';
 const XL_SITE_PATH='/sites/AppsOperation';
-const XL_FILE_NAME='CoilInventory.xlsx';
+const XL_FILE_PATH=['App Operation','CoilInventory.xlsx'].map(encodeURIComponent).join('/');
 
 async function resolveSharedFile(token){
-  if(sharedDriveId && sharedItemId) return;
+  if(sharedDriveId) return;
   const siteRes=await fetch(`https://graph.microsoft.com/v1.0/sites/${XL_SITE_HOSTNAME}:${XL_SITE_PATH}`,{headers:{Authorization:'Bearer '+token}});
   if(!siteRes.ok) throw new Error('Could not find the SharePoint site ('+siteRes.status+')');
   const site=await siteRes.json();
@@ -372,17 +372,11 @@ async function resolveSharedFile(token){
   if(!driveRes.ok) throw new Error('Could not access the site\'s document library ('+driveRes.status+')');
   const drive=await driveRes.json();
   sharedDriveId=drive.id;
-  const searchRes=await fetch(`https://graph.microsoft.com/v1.0/drives/${sharedDriveId}/root/search(q='${encodeURIComponent(XL_FILE_NAME)}')`,{headers:{Authorization:'Bearer '+token}});
-  if(!searchRes.ok) throw new Error('Could not search the document library for '+XL_FILE_NAME+' ('+searchRes.status+')');
-  const searchData=await searchRes.json();
-  const match=(searchData.value||[]).find(f=>f.name===XL_FILE_NAME);
-  if(!match) throw new Error(XL_FILE_NAME+' was not found anywhere in this site\'s document library.');
-  sharedItemId=match.id;
-  console.log('Resolved SharePoint drive:', sharedDriveId, ' itemId:', sharedItemId);
+  console.log('Resolved SharePoint drive:', sharedDriveId);
 }
 
 function wbBase(){
-  return `https://graph.microsoft.com/v1.0/drives/${sharedDriveId}/items/${sharedItemId}/workbook`;
+  return `https://graph.microsoft.com/v1.0/drives/${sharedDriveId}/root:/${XL_FILE_PATH}:/workbook`;
 }
 
 async function loadFromExcel(){
