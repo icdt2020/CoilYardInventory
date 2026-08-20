@@ -319,7 +319,7 @@ const uid=()=>'c_'+Date.now().toString(36)+Math.random().toString(36).slice(2,7)
 const XL_HEADERS=['coilId','status','heat','grade','gauge','width','weight','od','core','location','customer','supplier','received','notes'];
 const XL_SHEET='Coils';
 let msalInstance=null, msalAccount=null;
-let sharedDriveId=null, sharedItemId=null;
+let sharedDriveId=null;
 
 let msalInitPromise=null;
 async function initMsal(){
@@ -354,38 +354,29 @@ async function getGraphToken(){
   }
 }
 
-// Encodes a OneDrive/SharePoint sharing URL into the "shareId" format Graph's
-// /shares endpoint expects. This lets every signed-in user resolve the SAME
-// physical file (wherever it actually lives) instead of looking in their own
-// personal OneDrive, which is what caused the "works for me, 404 for everyone
-// else" bug.
-// TEMPORARY: resolving the new SharePoint (DSMI Agility Implementation site)
-// location once, via the sharing link, to capture its permanent driveId/itemId.
-// This will be replaced with hardcoded values again once captured.
-const XL_SHARE_URL='https://steelerinc.sharepoint.com/:x:/s/DSMIAgilityImplementation/IQApHNVkCYAVT7T_cw44PKpAAWifNP-8xfmGCV3DNhLC2B4?e=Pl2cHk';
-
-function encodeShareUrl(url){
-  const utf8=unescape(encodeURIComponent(url));
-  let b64=btoa(utf8).replace(/=+$/,'').replace(/\//g,'_').replace(/\+/g,'-');
-  return 'u!'+b64;
-}
+// Resolves the SharePoint site's document library directly (instead of going
+// through a sharing link, which proved unreliable — even the file's own owner
+// hit a 403 resolving via /shares/). This is the standard, robust way to reach
+// a Team/SharePoint site's files: hostname + site path + file path, all plain
+// and human-readable, no fragile link tokens involved.
+const XL_SITE_HOSTNAME='steelerinc.sharepoint.com';
+const XL_SITE_PATH='/sites/DSMIAgilityImplementation';
+const XL_FILE_PATH='CoilInventory.xlsx';
 
 async function resolveSharedFile(token){
-  if(sharedDriveId && sharedItemId) return;
-  const shareId=encodeShareUrl(XL_SHARE_URL);
-  const res=await fetch(`https://graph.microsoft.com/v1.0/shares/${shareId}/driveItem?$select=id,parentReference`,{headers:{Authorization:'Bearer '+token}});
-  if(!res.ok){
-    if(res.status===403||res.status===401) throw new Error('This account doesn\'t have access to CoilInventory.xlsx yet.');
-    throw new Error('Could not find the shared CoilInventory.xlsx ('+res.status+')');
-  }
-  const item=await res.json();
-  sharedDriveId=item.parentReference.driveId;
-  sharedItemId=item.id;
-  console.log('NEW OneDrive resolved — driveId:', sharedDriveId, ' itemId:', sharedItemId);
+  if(sharedDriveId) return;
+  const siteRes=await fetch(`https://graph.microsoft.com/v1.0/sites/${XL_SITE_HOSTNAME}:${XL_SITE_PATH}`,{headers:{Authorization:'Bearer '+token}});
+  if(!siteRes.ok) throw new Error('Could not find the SharePoint site ('+siteRes.status+')');
+  const site=await siteRes.json();
+  const driveRes=await fetch(`https://graph.microsoft.com/v1.0/sites/${site.id}/drive`,{headers:{Authorization:'Bearer '+token}});
+  if(!driveRes.ok) throw new Error('Could not access the site\'s document library ('+driveRes.status+')');
+  const drive=await driveRes.json();
+  sharedDriveId=drive.id;
+  console.log('Resolved SharePoint drive:', sharedDriveId);
 }
 
 function wbBase(){
-  return `https://graph.microsoft.com/v1.0/drives/${sharedDriveId}/items/${sharedItemId}/workbook`;
+  return `https://graph.microsoft.com/v1.0/drives/${sharedDriveId}/root:/${XL_FILE_PATH}:/workbook`;
 }
 
 async function loadFromExcel(){
