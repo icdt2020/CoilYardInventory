@@ -361,7 +361,7 @@ async function getGraphToken(){
 // step, no indexing delay to worry about.
 const XL_SITE_HOSTNAME='steelerinc.sharepoint.com';
 const XL_SITE_PATH='/sites/AppsOperation';
-const XL_FILE_PATH=['App Operation','CoilInventory.xlsx'].map(encodeURIComponent).join('/');
+const XL_FILE_PATH=['Apps Operation','CoilInventory.xlsx'].map(encodeURIComponent).join('/');
 
 async function resolveSharedFile(token){
   if(sharedDriveId) return;
