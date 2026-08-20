@@ -794,7 +794,28 @@ function csvLine(line){
   }
   out.push(cur); return out;
 }
+    // 
+    async function testFileOnly() {
 
+        const token = await getGraphToken();
+
+        await resolveSharedFile(token);
+
+        const testUrl =
+            `https://graph.microsoft.com/v1.0/drives/${sharedDriveId}/root:/Apps%20Operation/CoilInventory.xlsx`;
+
+        const res = await fetch(testUrl, {
+            headers: {
+                Authorization: 'Bearer ' + token
+            }
+        });
+
+        console.log("Status:", res.status);
+
+        const text = await res.text();
+
+        console.log(text);
+    }
 load();
 
 // Handle a coil ID handed to us via Android's Share sheet (e.g. from a QR/barcode scanner app)
