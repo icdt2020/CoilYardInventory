@@ -271,7 +271,7 @@ function renderAll(coils){
 renderAll(SAMPLE_COILS);
 
 /* ---------- OneDrive / Excel — same app registration as the main inventory app ---------- */
-const XL_SHARE_URL='https://steelerinc-my.sharepoint.com/:x:/r/personal/charlesm_steeler_com/_layouts/15/Doc.aspx?sourcedoc=%7B4F46EC19-4A3F-4AAB-B7DC-01795417EB11%7D&file=CoilInventory.xlsx&action=default&mobileredirect=true&DefaultItemOpen=1';
+const XL_SHARE_URL='https://steelerinc-my.sharepoint.com/:x:/g/personal/charlesm_steeler_com/IQAZ7EZPP0qrSrfcAXlUF-sRAaGkkfpNrMuByLYjPk-0wR4';
 const XL_SHEET='Coils';
 let msalInstance=null, msalInitPromise=null, msalAccount=null;
 let sharedDriveId=null, sharedItemId=null;
@@ -316,6 +316,7 @@ async function resolveSharedFile(token){
   const item=await res.json();
   sharedDriveId=item.parentReference.driveId;
   sharedItemId=item.id;
+  console.log('OneDrive resolved — driveId:', sharedDriveId, ' itemId:', sharedItemId);
 }
 
 async function loadFromExcel(){
