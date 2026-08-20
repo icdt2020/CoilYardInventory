@@ -344,7 +344,7 @@ function odSetStatus(text){ const el=$('odStatusText'); if(el) el.textContent=te
 
 async function getGraphToken(){
   const inst=await initMsal();
-  const req={scopes:['Files.ReadWrite'], account:msalAccount};
+  const req={scopes:['Files.ReadWrite','Sites.Read.All'], account:msalAccount};
   try{
     const r=await inst.acquireTokenSilent(req);
     return r.accessToken;
@@ -418,7 +418,7 @@ async function connectOneDrive(){
   if(!inst){ alert('OneDrive library failed to load — check your connection and try again.'); return; }
   odSetStatus('Connecting…');
   try{
-    const resp=await inst.loginPopup({scopes:['Files.ReadWrite']});
+    const resp=await inst.loginPopup({scopes:['Files.ReadWrite','Sites.Read.All']});
     msalAccount=resp.account;
     odSetStatus('Setting up CoilInventory.xlsx…');
     await loadFromExcel();
