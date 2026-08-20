@@ -317,7 +317,6 @@ const uid=()=>'c_'+Date.now().toString(36)+Math.random().toString(36).slice(2,7)
 
 /* ---------- OneDrive / Excel backend ---------- */
 const XL_HEADERS=['coilId','status','heat','grade','gauge','width','weight','od','core','location','customer','supplier','received','notes'];
-const XL_SHARE_URL='https://steelerinc-my.sharepoint.com/:x:/g/personal/charlesm_steeler_com/IQAZ7EZPP0qrSrfcAXlUF-sRAaGkkfpNrMuByLYjPk-0wR4';
 const XL_SHEET='Coils';
 let msalInstance=null, msalAccount=null;
 let sharedDriveId=null, sharedItemId=null;
@@ -360,24 +359,16 @@ async function getGraphToken(){
 // physical file (wherever it actually lives) instead of looking in their own
 // personal OneDrive, which is what caused the "works for me, 404 for everyone
 // else" bug.
-function encodeShareUrl(url){
-  const utf8=unescape(encodeURIComponent(url));
-  let b64=btoa(utf8).replace(/=+$/,'').replace(/\//g,'_').replace(/\+/g,'-');
-  return 'u!'+b64;
-}
+// Fixed, permanent identifiers for CoilInventory.xlsx — captured once via the
+// /shares/ lookup, then hardcoded so every load/save goes straight to the
+// real file with no link-resolution step (and no dependency on sharing-link
+// scope/propagation quirks) in the loop.
+const XL_DRIVE_ID='b!G5Az0SLi6kqDrATgh2rkJ1fYJumZdi5HjtBSH4BoghAZ_1H6hw7BTLNhws8AIO8Y';
+const XL_ITEM_ID='01UXMG4AIZ5RDE6P2KVNFLPXABPFKBP2YR';
 
 async function resolveSharedFile(token){
-  if(sharedDriveId && sharedItemId) return;
-  const shareId=encodeShareUrl(XL_SHARE_URL);
-  const res=await fetch(`https://graph.microsoft.com/v1.0/shares/${shareId}/driveItem?$select=id,parentReference`,{headers:{Authorization:'Bearer '+token}});
-  if(!res.ok){
-    if(res.status===403||res.status===401) throw new Error('This account doesn\'t have access to CoilInventory.xlsx yet. Ask the file owner to share it with you first (OneDrive → right-click the file → Share → give Edit access).');
-    throw new Error('Could not find the shared CoilInventory.xlsx ('+res.status+')');
-  }
-  const item=await res.json();
-  sharedDriveId=item.parentReference.driveId;
-  sharedItemId=item.id;
-  console.log('OneDrive resolved — driveId:', sharedDriveId, ' itemId:', sharedItemId);
+  sharedDriveId=XL_DRIVE_ID;
+  sharedItemId=XL_ITEM_ID;
 }
 
 function wbBase(){
