@@ -228,7 +228,15 @@ button:active{opacity:.75;}
         <option value="SHIPPED">Shipped</option>
       </select>
     </div>
-    <div class="field"><label>Location / Zone</label><input type="text" id="f_location" placeholder="e.g. Row C - Bay 12"></div>
+    <div class="field">
+      <label>Location / Zone</label>
+      <div class="inputrow">
+        <input type="text" id="f_location" placeholder="e.g. Row C - Bay 12">
+        <button type="button" id="btnScanLocation" title="Scan location barcode">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2"/><path d="M7 12h10"/></svg>
+        </button>
+      </div>
+    </div>
     <div class="g2">
       <div class="field"><label>Heat / Lot</label><input type="text" id="f_heat"></div>
       <div class="field"><label>Grade / Material</label><input type="text" id="f_grade"></div>
@@ -237,7 +245,7 @@ button:active{opacity:.75;}
       <div class="field"><label>Weight</label><input type="text" id="f_weight"></div>
       <div class="field"><label>Outer Dia (OD)</label><input type="text" id="f_od"></div>
       <div class="field"><label>Core ID</label><input type="text" id="f_core"></div>
-      <div class="field"><label>Received Date</label><input type="date" id="f_received"></div>
+      <div class="field"><label>Received Date & Time</label><input type="datetime-local" id="f_received"></div>
     </div>
     <div class="field"><label>Customer / Sales Order</label><input type="text" id="f_customer"></div>
     <div class="field"><label>Supplier / Mill</label><input type="text" id="f_supplier"></div>
@@ -309,9 +317,10 @@ const uid=()=>'c_'+Date.now().toString(36)+Math.random().toString(36).slice(2,7)
 
 /* ---------- OneDrive / Excel backend ---------- */
 const XL_HEADERS=['coilId','status','heat','grade','gauge','width','weight','od','core','location','customer','supplier','received','notes'];
-const XL_FILE='CoilInventory.xlsx';
+const XL_SHARE_URL='https://steelerinc-my.sharepoint.com/:x:/r/personal/charlesm_steeler_com/_layouts/15/Doc.aspx?sourcedoc=%7B4F46EC19-4A3F-4AAB-B7DC-01795417EB11%7D&file=CoilInventory.xlsx&action=default&mobileredirect=true&DefaultItemOpen=1';
 const XL_SHEET='Coils';
 let msalInstance=null, msalAccount=null;
+let sharedDriveId=null, sharedItemId=null;
 
 let msalInitPromise=null;
 async function initMsal(){
@@ -346,31 +355,40 @@ async function getGraphToken(){
   }
 }
 
-async function ensureExcelFile(token){
-  const check=await fetch(`https://graph.microsoft.com/v1.0/me/drive/root:/${XL_FILE}`,{headers:{Authorization:'Bearer '+token}});
-  if(check.status===404){
-    const wb=XLSX.utils.book_new();
-    const ws=XLSX.utils.aoa_to_sheet([XL_HEADERS]);
-    XLSX.utils.book_append_sheet(wb,ws,XL_SHEET);
-    const bin=XLSX.write(wb,{bookType:'xlsx',type:'array'});
-    const blob=new Blob([bin],{type:'application/octet-stream'});
-    const up=await fetch(`https://graph.microsoft.com/v1.0/me/drive/root:/${XL_FILE}:/content`,{
-      method:'PUT',
-      headers:{Authorization:'Bearer '+token,'Content-Type':'application/octet-stream'},
-      body:blob
-    });
-    if(!up.ok) throw new Error('Could not create '+XL_FILE+' ('+up.status+')');
-  }else if(!check.ok){
-    throw new Error('Could not access OneDrive ('+check.status+')');
+// Encodes a OneDrive/SharePoint sharing URL into the "shareId" format Graph's
+// /shares endpoint expects. This lets every signed-in user resolve the SAME
+// physical file (wherever it actually lives) instead of looking in their own
+// personal OneDrive, which is what caused the "works for me, 404 for everyone
+// else" bug.
+function encodeShareUrl(url){
+  const utf8=unescape(encodeURIComponent(url));
+  let b64=btoa(utf8).replace(/=+$/,'').replace(/\//g,'_').replace(/\+/g,'-');
+  return 'u!'+b64;
+}
+
+async function resolveSharedFile(token){
+  if(sharedDriveId && sharedItemId) return;
+  const shareId=encodeShareUrl(XL_SHARE_URL);
+  const res=await fetch(`https://graph.microsoft.com/v1.0/shares/${shareId}/driveItem?$select=id,parentReference`,{headers:{Authorization:'Bearer '+token}});
+  if(!res.ok){
+    if(res.status===403||res.status===401) throw new Error('This account doesn\'t have access to CoilInventory.xlsx yet. Ask the file owner to share it with you first (OneDrive → right-click the file → Share → give Edit access).');
+    throw new Error('Could not find the shared CoilInventory.xlsx ('+res.status+')');
   }
+  const item=await res.json();
+  sharedDriveId=item.parentReference.driveId;
+  sharedItemId=item.id;
+}
+
+function wbBase(){
+  return `https://graph.microsoft.com/v1.0/drives/${sharedDriveId}/items/${sharedItemId}/workbook`;
 }
 
 async function loadFromExcel(){
   const token=await getGraphToken();
-  await ensureExcelFile(token);
-  const url=`https://graph.microsoft.com/v1.0/me/drive/root:/${XL_FILE}:/workbook/worksheets('${XL_SHEET}')/usedRange`;
+  await resolveSharedFile(token);
+  const url=`${wbBase()}/worksheets('${XL_SHEET}')/usedRange`;
   const res=await fetch(url,{headers:{Authorization:'Bearer '+token}});
-  if(!res.ok) throw new Error('Could not read '+XL_FILE+' ('+res.status+')');
+  if(!res.ok) throw new Error('Could not read CoilInventory.xlsx ('+res.status+')');
   const data=await res.json();
   const rows=data.values||[];
   if(rows.length<2){ coils=[]; return; }
@@ -387,15 +405,16 @@ async function loadFromExcel(){
 
 async function saveToExcel(){
   const token=await getGraphToken();
-  const clearUrl=`https://graph.microsoft.com/v1.0/me/drive/root:/${XL_FILE}:/workbook/worksheets('${XL_SHEET}')/range(address='A1:N5000')/clear`;
+  await resolveSharedFile(token);
+  const clearUrl=`${wbBase()}/worksheets('${XL_SHEET}')/range(address='A1:N5000')/clear`;
   await fetch(clearUrl,{method:'POST',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:JSON.stringify({applyTo:'Contents'})});
   const data=[XL_HEADERS];
   coils.forEach(c=>data.push(XL_HEADERS.map(h=>c[h]||'')));
   const lastCol=String.fromCharCode(64+XL_HEADERS.length);
   const address=`A1:${lastCol}${data.length}`;
-  const writeUrl=`https://graph.microsoft.com/v1.0/me/drive/root:/${XL_FILE}:/workbook/worksheets('${XL_SHEET}')/range(address='${address}')`;
+  const writeUrl=`${wbBase()}/worksheets('${XL_SHEET}')/range(address='${address}')`;
   const res=await fetch(writeUrl,{method:'PATCH',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:JSON.stringify({values:data})});
-  if(!res.ok) throw new Error('Could not write to '+XL_FILE+' ('+res.status+')');
+  if(!res.ok) throw new Error('Could not write to CoilInventory.xlsx ('+res.status+')');
 }
 
 async function connectOneDrive(){
@@ -405,7 +424,7 @@ async function connectOneDrive(){
   try{
     const resp=await inst.loginPopup({scopes:['Files.ReadWrite']});
     msalAccount=resp.account;
-    odSetStatus('Setting up '+XL_FILE+'…');
+    odSetStatus('Setting up CoilInventory.xlsx…');
     await loadFromExcel();
     odConnectedUI();
     render();
@@ -418,8 +437,8 @@ async function connectOneDrive(){
 function odConnectedUI(){
   $('btnConnectOD').classList.add('hide');
   $('btnDisconnectOD').classList.remove('hide');
-  odSetStatus('Connected as '+(msalAccount?msalAccount.username:'')+' — saving to '+XL_FILE+' in OneDrive.');
-  $('storageNote').innerHTML='Data is saving <strong>live to OneDrive</strong> ('+XL_FILE+'). Anyone with access to that file can also open it directly in Excel.';
+  odSetStatus('Connected as '+(msalAccount?msalAccount.username:'')+' — saving to the shared CoilInventory.xlsx.');
+  $('storageNote').innerHTML='Data is saving <strong>live to OneDrive</strong> (CoilInventory.xlsx). Anyone with access to that file can also open it directly in Excel.';
 }
 
 $('btnConnectOD').addEventListener('click',connectOneDrive);
@@ -514,12 +533,19 @@ $('btnClear').addEventListener('click',()=>{$('search').value='';$('filterStatus
 
 /* ---------- add / edit ---------- */
 const F=['coilId','heat','grade','gauge','width','weight','od','core','location','customer','supplier','received','notes'];
+function nowLocalInput(){
+  const d=new Date();
+  const off=d.getTimezoneOffset();
+  const local=new Date(d.getTime()-off*60000);
+  return local.toISOString().slice(0,16);
+}
 function openAdd(prefillId){
   editingId=null;
   $('editTitle').textContent='Add Coil';
   $('btnDelete').classList.add('hide');
   F.forEach(k=>$('f_'+k).value='');
   $('f_status').value='RECEIVED';
+  $('f_received').value=nowLocalInput();
   if(prefillId)$('f_coilId').value=prefillId;
   $('editOverlay').classList.add('open');
 }
@@ -645,6 +671,7 @@ function onScan(text){
 
 function handleId(val){
   if(scanMode==='field'){ $('f_coilId').value=val; return; }
+  if(scanMode==='location'){ $('f_location').value=val; return; }
   const match=coils.find(c=>(c.coilId||'').toLowerCase()===val.toLowerCase());
   if(match){ openEdit(match.id); }
   else{
@@ -664,6 +691,7 @@ function closeScanner(){
 
 $('btnScan').addEventListener('click',()=>openScanner('search'));
 $('btnScanField').addEventListener('click',()=>openScanner('field'));
+$('btnScanLocation').addEventListener('click',()=>openScanner('location'));
 $('btnScanCancel').addEventListener('click',closeScanner);
 $('btnManualGo').addEventListener('click',()=>{
   const v=$('manualId').value.trim();
