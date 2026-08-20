@@ -397,9 +397,17 @@ async function loadFromExcel(){
         }
     );
 
-    const session = await sessionRes.json();
+    const sessionText = await sessionRes.text();
 
-    console.log(session);
+    console.log("Create Session Status:", sessionRes.status);
+    console.log("Create Session Response:", sessionText);
+
+    if (!sessionRes.ok) {
+        throw new Error(
+            `CreateSession failed (${sessionRes.status})
+${sessionText}`
+        );
+    }
   const res=await fetch(url,{headers:{Authorization:'Bearer '+token}});
   if (!res.ok) {
        const err = await res.text();
