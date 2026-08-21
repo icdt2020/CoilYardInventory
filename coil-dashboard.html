@@ -132,8 +132,8 @@ tbody tr:last-child td{border-bottom:none;}
         <div class="sub">Status & Location Overview</div>
       </div>
     </div>
-    <div class="asof" id="asof"><span class="dot"></span>Sample data — connect OneDrive for live numbers</div>
-    <button id="btnConnectOD" style="margin-top:8px;font-family:var(--f-ui);font-weight:600;font-size:12.5px;border-radius:5px;border:1px solid var(--accent);background:var(--accent);color:#1C1400;padding:8px 14px;cursor:pointer;">Connect to OneDrive</button>
+    <div class="asof" id="asof"><span class="dot"></span>Sample data — connect below for live numbers</div>
+    <button id="btnConnectOD" style="margin-top:8px;font-family:var(--f-ui);font-weight:600;font-size:12.5px;border-radius:5px;border:1px solid var(--accent);background:var(--accent);color:#1C1400;padding:8px 14px;cursor:pointer;">Connect to Coil Inventory List</button>
   </div>
 
   <div class="kpis" id="kpis"></div>
@@ -164,7 +164,7 @@ tbody tr:last-child td{border-bottom:none;}
   </div>
 
   <div class="note">
-    This view uses sample data matching the pilot app. The live version updates automatically as coils are scanned in the yard — connected to the same OneDrive Excel file the team already edits, with no manual reporting step.
+    This view uses sample data matching the pilot app. The live version updates automatically as coils are scanned in the yard — connected to the same SharePoint list the team already edits, with no manual reporting step.
   </div>
 </div>
 
@@ -343,7 +343,7 @@ async function loadFromExcel(){
 
 async function connectOneDrive(){
   const inst=await initMsal();
-  if(!inst){ alert('OneDrive library failed to load — check your connection and try again.'); return; }
+  if(!inst){ alert('Sign-in library failed to load — check your connection and try again.'); return; }
   document.getElementById('asof').innerHTML='<span class="dot"></span>Connecting…';
   try{
     const resp=await inst.loginPopup({scopes:['Files.ReadWrite','Sites.ReadWrite.All']});
@@ -353,8 +353,8 @@ async function connectOneDrive(){
     document.getElementById('asof').innerHTML=`<span class="dot"></span>Live — connected as ${msalAccount.username}`;
     document.getElementById('btnConnectOD').style.display='none';
   }catch(e){
-    document.getElementById('asof').innerHTML='<span class="dot"></span>Sample data — connect OneDrive for live numbers';
-    alert('Could not connect to OneDrive: '+(e.message||e));
+    document.getElementById('asof').innerHTML='<span class="dot"></span>Sample data — connect below for live numbers';
+    alert('Could not connect: '+(e.message||e));
   }
 }
 document.getElementById('btnConnectOD').addEventListener('click',connectOneDrive);
