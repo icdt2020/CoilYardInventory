@@ -289,15 +289,15 @@ button:active{opacity:.75;}
     <div class="grab"></div>
     <h2>Data & Tools</h2>
     <div class="note" id="storageNote">
-      Data is stored <strong>shared</strong> inside Claude — everyone opening this app there sees the same coil list. On this hosted version, connect OneDrive below to save data for real.
+      Data is stored <strong>shared</strong> inside Claude — everyone opening this app there sees the same coil list. On this hosted version, connect below to save data for real.
     </div>
     <div class="field" id="odStatus">
-      <label>OneDrive</label>
+      <label>Coil Inventory List</label>
       <div class="meta" id="odStatusText">Not connected — data won't be saved on this hosted version until you connect.</div>
     </div>
     <div class="sheet-actions" style="flex-direction:column;">
-      <button class="primary" id="btnConnectOD">Connect to OneDrive</button>
-      <button id="btnDisconnectOD" class="hide">Disconnect OneDrive</button>
+      <button class="primary" id="btnConnectOD">Connect to Coil Inventory List</button>
+      <button id="btnDisconnectOD" class="hide">Disconnect</button>
       <button id="btnExport">Export CSV</button>
       <button id="btnImport">Import CSV</button>
       <button id="btnSeed2">Load sample data</button>
@@ -455,7 +455,7 @@ async function deleteListItem(spId){
 
 async function connectOneDrive(){
   const inst=await initMsal();
-  if(!inst){ alert('OneDrive library failed to load — check your connection and try again.'); return; }
+  if(!inst){ alert('Sign-in library failed to load — check your connection and try again.'); return; }
   odSetStatus('Connecting…');
   try{
     const resp=await inst.loginPopup({scopes:['Files.ReadWrite','Sites.ReadWrite.All']});
@@ -466,7 +466,7 @@ async function connectOneDrive(){
     render();
   }catch(e){
     odSetStatus('Not connected — data won\'t be saved on this hosted version until you connect.');
-    alert('Could not connect to OneDrive: '+(e.message||e));
+    alert('Could not connect: '+(e.message||e));
   }
 }
 
@@ -483,7 +483,7 @@ $('btnDisconnectOD').addEventListener('click',()=>{
   $('btnConnectOD').classList.remove('hide');
   $('btnDisconnectOD').classList.add('hide');
   odSetStatus('Not connected — data won\'t be saved on this hosted version until you connect.');
-  $('storageNote').innerHTML='Data is stored <strong>shared</strong> inside Claude — everyone opening this app there sees the same coil list. On this hosted version, connect OneDrive below to save data for real.';
+  $('storageNote').innerHTML='Data is stored <strong>shared</strong> inside Claude — everyone opening this app there sees the same coil list. On this hosted version, connect below to save data for real.';
 });
 
 // Try to silently restore a previous OneDrive session on load
