@@ -315,11 +315,8 @@ const $=id=>document.getElementById(id);
 const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
 const uid=()=>'c_'+Date.now().toString(36)+Math.random().toString(36).slice(2,7);
 
-/* ---------- OneDrive / Excel backend ---------- */
-const XL_HEADERS=['coilId','status','heat','grade','gauge','width','weight','od','core','location','customer','supplier','received','notes'];
-const XL_SHEET='Coils';
+/* ---------- OneDrive / SharePoint List backend ---------- */
 let msalInstance=null, msalAccount=null;
-let sharedDriveId=null;
 
 let msalInitPromise=null;
 async function initMsal(){
@@ -355,94 +352,105 @@ async function getGraphToken(){
 }
 
 // Resolves the SharePoint site's document library directly (instead of going
-// through a sharing link, which proved unreliable — even the file's own owner
-// hit a 403 resolving via /shares/). Points directly at the file's known path
-// (confirmed: Documents > Apps Operation > CoilInventory.xlsx) — no search
-// step, no indexing delay to worry about.
-const XL_SITE_HOSTNAME='steelerinc.sharepoint.com';
-const XL_SITE_PATH='/sites/AppsOperation';
-const XL_FILE_PATH=['Apps Operation','CoilInventory.xlsx'].map(encodeURIComponent).join('/');
+// SharePoint List backend — a completely separate part of Graph's API from
+// the buggy Excel Workbook layer, and items update individually instead of
+// the whole file getting rewritten on every save.
+const SP_SITE_HOSTNAME='steelerinc.sharepoint.com';
+const SP_SITE_PATH='/sites/AppsOperation';
+const SP_LIST_ID='724eaa34-a046-4002-a599-52c9982373d9';
+let spSiteId=null;
 
-async function resolveSharedFile(token){
-  if(sharedDriveId) return;
-  const siteRes=await fetch(`https://graph.microsoft.com/v1.0/sites/${XL_SITE_HOSTNAME}:${XL_SITE_PATH}`,{headers:{Authorization:'Bearer '+token}});
-  if(!siteRes.ok) throw new Error('Could not find the SharePoint site ('+siteRes.status+')');
-  const site=await siteRes.json();
-  const driveRes=await fetch(`https://graph.microsoft.com/v1.0/sites/${site.id}/drive`,{headers:{Authorization:'Bearer '+token}});
-  if(!driveRes.ok) throw new Error('Could not access the site\'s document library ('+driveRes.status+')');
-  const drive=await driveRes.json();
-  sharedDriveId=drive.id;
-  console.log('Resolved SharePoint drive:', sharedDriveId);
+// Maps our internal coil field names to this list's actual column names.
+const FIELD_MAP={
+  coilId:'Title', status:'Status', heat:'Heat', grade:'Grade', gauge:'Gauge',
+  width:'Width', weight:'Weight', od:'OD', core:'Core', location:'Location',
+  customer:'Customer', supplier:'Supplier', notes:'Notes'
+  // received handled separately below — it's a Date/Time column, not text
+};
+
+async function resolveSite(token){
+  if(spSiteId) return;
+  const res=await fetch(`https://graph.microsoft.com/v1.0/sites/${SP_SITE_HOSTNAME}:${SP_SITE_PATH}`,{headers:{Authorization:'Bearer '+token}});
+  if(!res.ok) throw new Error('Could not find the SharePoint site ('+res.status+')');
+  const site=await res.json();
+  spSiteId=site.id;
 }
 
-function wbBase(){
-  return `https://graph.microsoft.com/v1.0/drives/${sharedDriveId}/root:/${XL_FILE_PATH}:/workbook`;
+function listUrl(extra=''){
+  return `https://graph.microsoft.com/v1.0/sites/${spSiteId}/lists/${SP_LIST_ID}/items${extra}`;
 }
 
-async function loadFromExcel(){
+// datetime-local input ("2026-08-20T14:30") <-> SharePoint's ISO date field
+function toSPDate(localVal){
+  if(!localVal) return null;
+  const d=new Date(localVal);
+  return isNaN(d.getTime()) ? null : d.toISOString();
+}
+function fromSPDate(iso){
+  if(!iso) return '';
+  const d=new Date(iso);
+  const local=new Date(d.getTime()-d.getTimezoneOffset()*60000);
+  return local.toISOString().slice(0,16);
+}
+
+function coilToFields(c){
+  const f={};
+  Object.keys(FIELD_MAP).forEach(k=>{ f[FIELD_MAP[k]]=c[k]||''; });
+  f.ReceivedDate=toSPDate(c.received);
+  return f;
+}
+
+async function loadFromList(){
   const token=await getGraphToken();
-  await resolveSharedFile(token);
-    // const url=`${wbBase()}/worksheets('${XL_SHEET}')/usedRange`;
-    const sessionRes = await fetch(
-        `${wbBase()}/createSession`,
-        {
-            method: "POST",
-            headers: {
-                Authorization: "Bearer " + token,
-                "Content-Type": "application/json"
-            },
-            body: JSON.stringify({
-                persistChanges: true
-            })
-        }
-    );
-
-    const sessionText = await sessionRes.text();
-
-    console.log("Create Session Status:", sessionRes.status);
-    console.log("Create Session Response:", sessionText);
-
-    if (!sessionRes.ok) {
-        throw new Error(
-            `CreateSession failed (${sessionRes.status})
-${sessionText}`
-        );
-    }
-  const res=await fetch(url,{headers:{Authorization:'Bearer '+token}});
-  if (!res.ok) {
-       const err = await res.text();
-       console.error(err);
-      throw new Error(
-          `Could not read CoilInventory.xlsx (${res.status})
-   ${err}`
-       );
+  await resolveSite(token);
+  let url=listUrl('?$expand=fields&$top=999');
+  let items=[];
+  while(url){
+    const res=await fetch(url,{headers:{Authorization:'Bearer '+token}});
+    if(!res.ok) throw new Error('Could not read the list ('+res.status+')');
+    const data=await res.json();
+    items=items.concat(data.value||[]);
+    url=data['@odata.nextLink']||null;
   }
-  const data=await res.json();
-  const rows=data.values||[];
-  if(rows.length<2){ coils=[]; return; }
-  const headers=rows[0].map(h=>String(h||'').trim());
-  coils=rows.slice(1)
-    .filter(r=>r[0])
-    .map(r=>{
-      const o={id:uid()};
-      headers.forEach((h,i)=>{ o[h]=r[i]!==undefined&&r[i]!==null?String(r[i]):''; });
-      if(!o.status||!LABEL[o.status])o.status='RECEIVED';
-      return o;
-    });
+  coils=items.map(it=>{
+    const f=it.fields||{};
+    const c={id:uid(), spId:it.id};
+    Object.keys(FIELD_MAP).forEach(k=>{ c[k]=f[FIELD_MAP[k]]||''; });
+    c.received=fromSPDate(f.ReceivedDate);
+    if(!c.status||!LABEL[c.status]) c.status='RECEIVED';
+    return c;
+  });
 }
 
-async function saveToExcel(){
+async function addListItem(c){
   const token=await getGraphToken();
-  await resolveSharedFile(token);
-  const clearUrl=`${wbBase()}/worksheets('${XL_SHEET}')/range(address='A1:N5000')/clear`;
-  await fetch(clearUrl,{method:'POST',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:JSON.stringify({applyTo:'Contents'})});
-  const data=[XL_HEADERS];
-  coils.forEach(c=>data.push(XL_HEADERS.map(h=>c[h]||'')));
-  const lastCol=String.fromCharCode(64+XL_HEADERS.length);
-  const address=`A1:${lastCol}${data.length}`;
-  const writeUrl=`${wbBase()}/worksheets('${XL_SHEET}')/range(address='${address}')`;
-  const res=await fetch(writeUrl,{method:'PATCH',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:JSON.stringify({values:data})});
-  if(!res.ok) throw new Error('Could not write to CoilInventory.xlsx ('+res.status+')');
+  await resolveSite(token);
+  const res=await fetch(listUrl(),{
+    method:'POST',
+    headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},
+    body:JSON.stringify({fields:coilToFields(c)})
+  });
+  if(!res.ok) throw new Error('Could not add the coil to the list ('+res.status+')');
+  const created=await res.json();
+  return created.id;
+}
+
+async function updateListItem(c){
+  const token=await getGraphToken();
+  await resolveSite(token);
+  const res=await fetch(listUrl(`/${c.spId}/fields`),{
+    method:'PATCH',
+    headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},
+    body:JSON.stringify(coilToFields(c))
+  });
+  if(!res.ok) throw new Error('Could not update the coil ('+res.status+')');
+}
+
+async function deleteListItem(spId){
+  const token=await getGraphToken();
+  await resolveSite(token);
+  const res=await fetch(listUrl(`/${spId}`),{ method:'DELETE', headers:{Authorization:'Bearer '+token} });
+  if(!res.ok) throw new Error('Could not delete the coil ('+res.status+')');
 }
 
 async function connectOneDrive(){
@@ -452,8 +460,8 @@ async function connectOneDrive(){
   try{
     const resp=await inst.loginPopup({scopes:['Files.ReadWrite','Sites.ReadWrite.All']});
     msalAccount=resp.account;
-    odSetStatus('Setting up CoilInventory.xlsx…');
-    await loadFromExcel();
+    odSetStatus('Loading the Coil Inventory list…');
+    await loadFromList();
     odConnectedUI();
     render();
   }catch(e){
@@ -465,8 +473,8 @@ async function connectOneDrive(){
 function odConnectedUI(){
   $('btnConnectOD').classList.add('hide');
   $('btnDisconnectOD').classList.remove('hide');
-  odSetStatus('Connected as '+(msalAccount?msalAccount.username:'')+' — saving to the shared CoilInventory.xlsx.');
-  $('storageNote').innerHTML='Data is saving <strong>live to OneDrive</strong> (CoilInventory.xlsx). Anyone with access to that file can also open it directly in Excel.';
+  odSetStatus('Connected as '+(msalAccount?msalAccount.username:'')+' — saving to the shared Coil Inventory list.');
+  $('storageNote').innerHTML='Data is saving <strong>live to a SharePoint list</strong> on the Apps Operation site. Changes save per-coil, not as a whole-file rewrite.';
 }
 
 $('btnConnectOD').addEventListener('click',connectOneDrive);
@@ -493,28 +501,20 @@ $('btnDisconnectOD').addEventListener('click',()=>{
   if(accounts.length>0){
     msalAccount=accounts[0];
     odConnectedUI();
-    loadFromExcel().then(render).catch(e=>odSetStatus('Reconnected, but could not load: '+(e.message||e)));
+    loadFromList().then(render).catch(e=>odSetStatus('Reconnected, but could not load: '+(e.message||e)));
   }
 })();
 
-/* ---------- storage: OneDrive if connected, else Claude's shared storage ---------- */
+/* ---------- storage: SharePoint list if connected, else Claude's shared storage ---------- */
 async function load(){
   if(msalAccount){
-    try{ await loadFromExcel(); }catch(e){ odSetStatus('Could not load from OneDrive: '+(e.message||e)); }
+    try{ await loadFromList(); }catch(e){ odSetStatus('Could not load from the list: '+(e.message||e)); }
     render();
     return;
   }
   try{const r=await window.storage.get(KEY,true);coils=r&&r.value?JSON.parse(r.value):[];}
   catch(e){coils=[];}
   render();
-}
-async function save(){
-  if(msalAccount){
-    try{ await saveToExcel(); }catch(e){ alert('Could not save to OneDrive: '+(e.message||e)); }
-    return;
-  }
-  try{await window.storage.set(KEY,JSON.stringify(coils),true);}
-  catch(e){alert('Could not save. Check your connection and try again.');}
 }
 
 function render(){
@@ -595,14 +595,44 @@ $('btnSave').addEventListener('click',async()=>{
   if(!coilId){alert('Coil ID is required.');return;}
   const d={status:$('f_status').value};
   F.forEach(k=>d[k]=$('f_'+k).value.trim());
-  if(editingId){const i=coils.findIndex(c=>c.id===editingId);if(i>-1)coils[i]={...coils[i],...d};}
-  else coils.push({id:uid(),...d});
-  await save(); $('editOverlay').classList.remove('open'); render();
+  try{
+    if(editingId){
+      const i=coils.findIndex(c=>c.id===editingId);
+      if(i>-1){
+        coils[i]={...coils[i],...d};
+        if(msalAccount) await updateListItem(coils[i]);
+      }
+    }else{
+      const newCoil={id:uid(),...d};
+      if(msalAccount){
+        const spId=await addListItem(newCoil);
+        newCoil.spId=spId;
+      }
+      coils.push(newCoil);
+    }
+    if(!msalAccount){
+      try{await window.storage.set(KEY,JSON.stringify(coils),true);}
+      catch(e){alert('Could not save. Check your connection and try again.');}
+    }
+    $('editOverlay').classList.remove('open'); render();
+  }catch(e){
+    alert('Could not save: '+(e.message||e));
+  }
 });
 $('btnDelete').addEventListener('click',async()=>{
   if(!editingId||!confirm('Delete this coil record?'))return;
-  coils=coils.filter(c=>c.id!==editingId);
-  await save(); $('editOverlay').classList.remove('open'); render();
+  const c=coils.find(x=>x.id===editingId);
+  try{
+    if(msalAccount && c && c.spId) await deleteListItem(c.spId);
+    coils=coils.filter(x=>x.id!==editingId);
+    if(!msalAccount){
+      try{await window.storage.set(KEY,JSON.stringify(coils),true);}
+      catch(e){alert('Could not save. Check your connection and try again.');}
+    }
+    $('editOverlay').classList.remove('open'); render();
+  }catch(e){
+    alert('Could not delete: '+(e.message||e));
+  }
 });
 
 /* ---------- scanner: native BarcodeDetector, ZXing fallback ---------- */
@@ -750,9 +780,23 @@ const SAMPLES=[
   {coilId:'CL-05010',heat:'H30512',grade:'A1011 CS Type B',gauge:'0.090 in',width:'48 in',weight:'40,200 lb',od:'66 in',core:'20 in',location:'Loadout Dock 1',status:'LOADING',customer:'Midwest Fab SO 88240',supplier:'Nucor',received:'2026-07-25',notes:''},
   {coilId:'CL-05033',heat:'H30601',grade:'A1011 CS Type B',gauge:'0.075 in',width:'48 in',weight:'42,050 lb',od:'68 in',core:'20 in',location:'Receiving',status:'RECEIVED',customer:'',supplier:'Nucor',received:'2026-08-11',notes:'Not yet inspected'}
 ];
+async function persistNewCoils(newCoils){
+  if(msalAccount){
+    for(const c of newCoils){
+      try{ c.spId=await addListItem(c); }
+      catch(e){ console.error('Could not add', c.coilId, e); }
+    }
+  }else{
+    try{await window.storage.set(KEY,JSON.stringify(coils),true);}
+    catch(e){alert('Could not save. Check your connection and try again.');}
+  }
+}
+
 async function seed(){
-  coils=coils.concat(SAMPLES.map(s=>({id:uid(),...s})));
-  await save(); $('moreOverlay').classList.remove('open'); render();
+  const newCoils=SAMPLES.map(s=>({id:uid(),...s}));
+  coils=coils.concat(newCoils);
+  await persistNewCoils(newCoils);
+  $('moreOverlay').classList.remove('open'); render();
 }
 $('btnSeed').addEventListener('click',seed);
 $('btnSeed2').addEventListener('click',seed);
@@ -773,17 +817,19 @@ $('fileInput').addEventListener('change',async e=>{
   const lines=(await f.text()).split(/\r?\n/).filter(l=>l.trim());
   if(lines.length<2){alert('CSV appears empty.');return;}
   const hdr=csvLine(lines[0]).map(h=>h.trim());
-  let n=0;
+  const newRecords=[];
   for(let i=1;i<lines.length;i++){
     const vals=csvLine(lines[i]); const row={};
     hdr.forEach((h,j)=>row[h]=vals[j]||'');
     if(!row.coilId)continue;
     if(!LABEL[row.status])row.status='RECEIVED';
     const rec={id:uid()}; HEADERS.forEach(h=>rec[h]=row[h]||''); rec.status=row.status;
-    coils.push(rec); n++;
+    newRecords.push(rec);
   }
-  await save(); render(); $('moreOverlay').classList.remove('open');
-  alert(`Imported ${n} coil${n===1?'':'s'}.`); e.target.value='';
+  coils=coils.concat(newRecords);
+  await persistNewCoils(newRecords);
+  render(); $('moreOverlay').classList.remove('open');
+  alert(`Imported ${newRecords.length} coil${newRecords.length===1?'':'s'}.`); e.target.value='';
 });
 function csvLine(line){
   const out=[];let cur='',q=false;
@@ -794,28 +840,7 @@ function csvLine(line){
   }
   out.push(cur); return out;
 }
-    // 
-    async function testFileOnly() {
 
-        const token = await getGraphToken();
-
-        await resolveSharedFile(token);
-
-        const testUrl =
-            `https://graph.microsoft.com/v1.0/drives/${sharedDriveId}/root:/Apps%20Operation/CoilInventory.xlsx`;
-
-        const res = await fetch(testUrl, {
-            headers: {
-                Authorization: 'Bearer ' + token
-            }
-        });
-
-        console.log("Status:", res.status);
-
-        const text = await res.text();
-
-        console.log(text);
-    }
 load();
 
 // Handle a coil ID handed to us via Android's Share sheet (e.g. from a QR/barcode scanner app)

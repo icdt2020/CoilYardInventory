@@ -270,10 +270,8 @@ function renderAll(coils){
 
 renderAll(SAMPLE_COILS);
 
-/* ---------- OneDrive / Excel — same app registration as the main inventory app ---------- */
-const XL_SHEET='Coils';
+/* ---------- OneDrive / SharePoint List — same source as the main inventory app ---------- */
 let msalInstance=null, msalInitPromise=null, msalAccount=null;
-let sharedDriveId=null;
 
 async function initMsal(){
   if(typeof msal==='undefined')return null;
@@ -298,47 +296,41 @@ async function getGraphToken(){
   catch(e){ return (await inst.acquireTokenPopup(req)).accessToken; }
 }
 
-// Resolves the SharePoint site's document library and points directly at the
-// file's known path (confirmed: Documents > Apps Operation > CoilInventory.xlsx).
-const XL_SITE_HOSTNAME='steelerinc.sharepoint.com';
-const XL_SITE_PATH='/sites/AppsOperation';
-const XL_FILE_PATH=['Apps Operation','CoilInventory.xlsx'].map(encodeURIComponent).join('/');
+const SP_SITE_HOSTNAME='steelerinc.sharepoint.com';
+const SP_SITE_PATH='/sites/AppsOperation';
+const SP_LIST_ID='724eaa34-a046-4002-a599-52c9982373d9';
+let spSiteId=null;
 
-async function resolveSharedFile(token){
-  if(sharedDriveId) return;
-  const siteRes=await fetch(`https://graph.microsoft.com/v1.0/sites/${XL_SITE_HOSTNAME}:${XL_SITE_PATH}`,{headers:{Authorization:'Bearer '+token}});
-  if(!siteRes.ok) throw new Error('Could not find the SharePoint site ('+siteRes.status+')');
-  const site=await siteRes.json();
-  const driveRes=await fetch(`https://graph.microsoft.com/v1.0/sites/${site.id}/drive`,{headers:{Authorization:'Bearer '+token}});
-  if(!driveRes.ok) throw new Error('Could not access the site\'s document library ('+driveRes.status+')');
-  const drive=await driveRes.json();
-  sharedDriveId=drive.id;
+const FIELD_MAP={
+  coilId:'Title', status:'Status', heat:'Heat', grade:'Grade', gauge:'Gauge',
+  width:'Width', weight:'Weight', od:'OD', core:'Core', location:'Location',
+  customer:'Customer', supplier:'Supplier', notes:'Notes'
+};
+
+async function resolveSite(token){
+  if(spSiteId) return;
+  const res=await fetch(`https://graph.microsoft.com/v1.0/sites/${SP_SITE_HOSTNAME}:${SP_SITE_PATH}`,{headers:{Authorization:'Bearer '+token}});
+  if(!res.ok) throw new Error('Could not find the SharePoint site ('+res.status+')');
+  const site=await res.json();
+  spSiteId=site.id;
 }
 
 async function loadFromExcel(){
   const token=await getGraphToken();
-  await resolveSharedFile(token);
-
-  const wsCheck=await fetch(`https://graph.microsoft.com/v1.0/drives/${sharedDriveId}/root:/${XL_FILE_PATH}:/workbook/worksheets`,{headers:{Authorization:'Bearer '+token}});
-  if(!wsCheck.ok) throw new Error(`Found CoilInventory.xlsx but could not read its worksheets (${wsCheck.status})`);
-  const wsData=await wsCheck.json();
-  const sheetNames=(wsData.value||[]).map(s=>s.name);
-  let sheetToUse=XL_SHEET;
-  if(!sheetNames.includes(XL_SHEET)){
-    if(sheetNames.length===0) throw new Error(`Found CoilInventory.xlsx but it has no worksheets at all.`);
-    sheetToUse=sheetNames[0];
-    console.warn(`No worksheet named "${XL_SHEET}" — using "${sheetToUse}" instead. Sheets found: ${sheetNames.join(', ')}`);
+  await resolveSite(token);
+  let url=`https://graph.microsoft.com/v1.0/sites/${spSiteId}/lists/${SP_LIST_ID}/items?$expand=fields&$top=999`;
+  let items=[];
+  while(url){
+    const res=await fetch(url,{headers:{Authorization:'Bearer '+token}});
+    if(!res.ok) throw new Error('Could not read the list ('+res.status+')');
+    const data=await res.json();
+    items=items.concat(data.value||[]);
+    url=data['@odata.nextLink']||null;
   }
-
-  const url=`https://graph.microsoft.com/v1.0/drives/${sharedDriveId}/root:/${XL_FILE_PATH}:/workbook/worksheets('${sheetToUse}')/usedRange`;
-  const res=await fetch(url,{headers:{Authorization:'Bearer '+token}});
-  if(!res.ok) throw new Error(`Found CoilInventory.xlsx and sheet "${sheetToUse}", but could not read its data (${res.status})`);
-  const data=await res.json();
-  const rows=data.values||[];
-  if(rows.length<2) return [];
-  const headers=rows[0].map(h=>String(h||'').trim());
-  return rows.slice(1).filter(r=>r[0]).map(r=>{
-    const o={}; headers.forEach((h,i)=>{ o[h]=r[i]!==undefined&&r[i]!==null?String(r[i]):''; });
+  return items.map(it=>{
+    const f=it.fields||{};
+    const o={};
+    Object.keys(FIELD_MAP).forEach(k=>{ o[k]=f[FIELD_MAP[k]]||''; });
     const loc=parseLocation(o.location);
     return {
       coilId:o.coilId, grade:o.grade, weight:o.weight,
